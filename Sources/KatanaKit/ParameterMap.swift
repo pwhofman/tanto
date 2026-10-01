@@ -138,6 +138,15 @@ public struct ParameterMap: Sendable {
         byOffset = Dictionary(table.parameters.map { ($0.offset, $0) }, uniquingKeysWith: { first, _ in first })
     }
 
+    /// Loads a table from a file. The app uses this with the copy in its own bundle, where SwiftPM's resource bundle
+    /// is not found.
+    ///
+    /// - Parameter url: A `parameters.json` file.
+    /// - Throws: An error from reading or `DecodingError` if the file is invalid.
+    public init(contentsOf url: URL) throws {
+        self.init(try JSONDecoder().decode(ParameterTable.self, from: Data(contentsOf: url)))
+    }
+
     /// Loads the table bundled with KatanaKit.
     ///
     /// - Returns: The map.

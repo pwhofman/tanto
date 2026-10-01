@@ -1,4 +1,6 @@
+import Dispatch
 import Observation
+import os
 
 /// The state behind Tanto's window: the connection, the live values, the channels and the refusals of `SafetyGuard`.
 ///
@@ -61,6 +63,7 @@ public final class EditorModel {
     @ObservationIgnored private var updatesTask: Task<Void, Never>?
     @ObservationIgnored private var retryTask: Task<Void, Never>?
     @ObservationIgnored private var retries = 0
+    private let logger = Logger(subsystem: "io.github.pwhofman.tanto", category: "editor")
 
     /// Creates a model that is not connected.
     ///
@@ -176,11 +179,37 @@ public final class EditorModel {
         updatesTask?.cancel()
         updatesTask = nil
         if let session {
-            try? await session.disconnect()
+            do {
+                try await session.disconnect()
+            } catch {
+                logger.error("editor mode not switched off: \(error)")
+            }
         }
         session = nil
         safety = nil
         connection = .notConnected
+    }
+
+    /// Switches editor mode off while the app quits, waiting at most `timeout`. It blocks the main thread because
+    /// `applicationWillTerminate` cannot await, and AppKit runs no main-actor task while it waits for a delayed reply
+    /// to `applicationShouldTerminate`.
+    ///
+    /// - Parameter timeout: The longest wait.
+    public func disconnectWhileQuitting(timeout: DispatchTimeInterval) {
+        guard let session else { return }
+        let done = DispatchSemaphore(value: 0)
+        let logger = logger
+        Task.detached {
+            do {
+                try await session.disconnect()
+            } catch {
+                logger.error("editor mode not switched off: \(error)")
+            }
+            done.signal()
+        }
+        if done.wait(timeout: .now() + timeout) == .timedOut {
+            logger.error("editor mode not switched off in time")
+        }
     }
 
     /// The live value of a parameter.

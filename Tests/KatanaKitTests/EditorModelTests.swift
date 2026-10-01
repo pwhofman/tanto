@@ -113,3 +113,10 @@ private func connectedModel() async throws -> (EditorModel, SimulatedAmp) {
     #expect(model.ceiling(of: volume) == 40)
     await #expect(throws: SafetyError.invalidCeiling(42)) { try await model.setCeilingPercent(42) }
 }
+
+@MainActor
+@Test func quittingSwitchesEditorModeOffWithoutTheMainActor() async throws {
+    let (model, amp) = try await connectedModel()
+    model.disconnectWhileQuitting(timeout: .seconds(1))
+    #expect(amp.received.last?.message == SysEx.dt1(.editorCommunicationMode, data: [0], deviceID: 0))
+}

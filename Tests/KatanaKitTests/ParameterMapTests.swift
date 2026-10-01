@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 
 @testable import KatanaKit
@@ -73,4 +74,13 @@ import Testing
     let lowGain = try #require(map.parameter(block: "Patch_0", prm: "PRM_EQ_LOW_GAIN"))
     #expect(lowGain.rawOffset == 20)
     #expect(map.values(in: [23], at: lowGain.offset) == [ParameterValue(parameter: lowGain, value: 3)])
+}
+
+@Test func aTableLoadsFromAFile() throws {
+    let table = try ParameterMap.bundled().table
+    let url = FileManager.default.temporaryDirectory.appending(path: "parameters-\(UUID().uuidString).json")
+    try JSONEncoder().encode(table).write(to: url)
+    let loaded = try ParameterMap(contentsOf: url)
+    try FileManager.default.removeItem(at: url)
+    #expect(loaded.table == table)
 }
