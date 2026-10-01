@@ -29,17 +29,28 @@ Steps:
    and PRESENCE with the knob positions; a knob at 12 o'clock is about 50.
 5. Record the results below. The log file stays local: `*.probe-log.txt` is in `.gitignore`.
 
-| Item                                                                   | Result |
-|------------------------------------------------------------------------|--------|
-| MIDI sources and destinations                                          |        |
-| Identity reply                                                         |        |
-| Editor communication level and revision                                |        |
-| Channel names match the amp                                            |        |
-| PANEL values match the knobs (GAIN, VOLUME, BASS, MIDDLE, TREBLE, PRESENCE) |   |
-| Amp VOLUME is `PRM_PREAMP_A_LEVEL` at `60 00 00 28`                    |        |
-| Messages when turning a knob                                           |        |
-| Messages when switching channels                                       |        |
-| Messages when changing the booster colour                              |        |
+### Results, 2026-10-01
+
+Katana-100 MkII, POWER CONTROL at 0.5 W, MASTER at minimum.
+
+| Item | Result |
+|---|---|
+| MIDI sources and destinations | Two of each: `KATANA` and `KATANA KATANA DAW CTRL`. Tanto uses `KATANA`, like Tone Studio. |
+| Identity reply | `F0 7E 00 06 02 41 33 03 00 00 06 00 00 00 F7`: device ID `00`, not Tone Studio's default `10`; model code `06`, the Katana-100 MkII. The amp ignores messages for another device ID. |
+| Editor communication level and revision | Level 8, as Tone Studio requires. The amp does not answer a revision read (`7F 00 00 03`); Tone Studio skips that read for the MkII. |
+| Channel names match the amp | PANEL and A1 `KATANA Mk2`, A2 `Mayer High Gain`, A3 `Mayer Rhythm`, A4 `Mayer Lead`, B1 `Page`, B2 `Acoustic`, B3 `Green Day`, B4 `Mayer Solo`. The current channel read as 6 (B2) and the live patch as `Acoustic`, which confirms the slot numbering. |
+| PANEL values match the knobs | Not run: the knob turns below tie the GAIN and VOLUME knobs to their addresses directly. |
+| Amp VOLUME is `PRM_PREAMP_A_LEVEL` at `60 00 00 28` | Yes. Turning VOLUME sends DT1 `60 00 00 28`. |
+| Messages when turning a knob | Two DT1s per step: the patch parameter, then the knob position in the Status block. GAIN: `60 00 00 22` and `60 00 06 51`; VOLUME: `60 00 00 28` and `60 00 06 52`. VOLUME jumped from the stored 88 to the knob position, 28; for GAIN the two values differ (69 against 61). The MOD knob changed the MOD effect's pitch (`60 00 01 4C`, pitch shifter). |
+| Messages when switching channels | DT1 `00 01 00 00` with the new number in two bytes (`00 07` = B3), followed by the whole new live patch from `60 00 00 00` to `60 00 0F 47`: eight DT1s of 241 bytes and one of 4, skipping unused memory. No Program Change. |
+| Messages when changing the booster colour | DT1 `60 00 06 39` (`PRM_FXBOX_SEL_BOOST`) with the new colour, then `60 00 00 11` (`PRM_ODDS_TYPE`) with that colour's booster type, plus the knob position and LED in the Status block (`60 00 06 57`, `60 00 06 5D`). No other booster parameter was resent. Turning the BOOSTER knob switched the booster on (`60 00 00 10` = 1) and changed DRIVE (`60 00 00 12`). |
+
+Further findings:
+
+- Stored patches can exceed the ceiling: B2 `Acoustic` has amp VOLUME 88, above the 50 % ceiling of 50. Plan 2 has to
+  settle how channel switching works with such patches.
+- The check needed three fixes: using the main port, addressing the amp by the device ID from its identity reply, and
+  following Tone Studio's connect sequence without the revision read.
 
 ## Check 2: first writes
 
