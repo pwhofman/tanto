@@ -2,7 +2,9 @@ import json
 
 import pytest
 
-from gen_parameter_map import DEFAULT_SOURCE, Entry, build_table, is_guarded, linear, parse_size, render
+from gen_parameter_map import DEFAULT_HTML, Entry, build_table, is_guarded, linear, parse_size, render
+
+ADDRESS_MAP = DEFAULT_HTML / "js/config/address_map.js"
 
 SNIPPET = """
 var prm_prop_patch_name = [
@@ -72,9 +74,9 @@ def test_guard_rule() -> None:
 def test_build_table_from_snippet() -> None:
     table = build_table(SNIPPET)
     assert table["blocks"] == [
-        {"name": "PatchName", "offset": 0, "size": 16, "editable": True},
-        {"name": "Patch_0", "offset": 16, "size": 129, "editable": True},
-        {"name": "Status", "offset": 848, "size": 1, "editable": False},
+        {"name": "PatchName", "offset": 0, "size": 16},
+        {"name": "Patch_0", "offset": 16, "size": 129},
+        {"name": "Status", "offset": 848, "size": 1},
     ]
     by_id = {p["prm"]: p for p in table["parameters"]}
     assert set(by_id) == {
@@ -97,11 +99,21 @@ def test_build_table_from_snippet() -> None:
         "rawOffset": 0,
         "initial": 50,
         "guarded": True,
+        "written": False,
+        "kind": "numeric",
+        "section": None,
+        "label": "DRIVE",
+        "options": None,
+        "valueLabels": None,
+        "format": None,
+        "visibleWhen": None,
     }
     assert by_id["PRM_EQ_LOW_GAIN"]["rawOffset"] == 20
     assert by_id["PRM_DLY_TIME"]["offset"] == 16 + 127
-    # Rows in blocks that v1 does not edit are never guarded.
-    assert by_id["PRM_KNOB_POS_VOLUME"]["guarded"] is False
+    # In the Status block only the front-panel knobs are guarded; the general rule does not apply there.
+    assert by_id["PRM_KNOB_POS_VOLUME"]["guarded"] is True
+    assert by_id["PRM_ODDS_SW"]["kind"] == "switch"
+    assert by_id["PRM_PATCH_NAME0"]["kind"] == "text"
 
 
 def test_render_is_valid_json_with_one_row_per_line() -> None:
@@ -112,12 +124,12 @@ def test_render_is_valid_json_with_one_row_per_line() -> None:
     assert len(text.splitlines()) == 3 + len(table["blocks"]) + 2 + len(table["parameters"]) + 2
 
 
-@pytest.mark.skipif(not DEFAULT_SOURCE.exists(), reason="Tone Studio is not installed")
+@pytest.mark.skipif(not ADDRESS_MAP.exists(), reason="Tone Studio is not installed")
 def test_real_address_map() -> None:
-    table = build_table(DEFAULT_SOURCE.read_text(encoding="utf-8"))
+    table = build_table(ADDRESS_MAP.read_text(encoding="utf-8"))
     assert len(table["blocks"]) == 31
     assert len(table["parameters"]) == 1465
-    assert sum(1 for p in table["parameters"] if p["guarded"]) == 210
+    assert sum(1 for p in table["parameters"] if p["guarded"]) == 217
     by_key = {(p["block"], p["prm"]): p for p in table["parameters"]}
     assert by_key[("Patch_0", "PRM_PREAMP_A_LEVEL")]["offset"] == 0x28
     assert by_key[("Patch_1", "PRM_FOOT_VOLUME_VOL_LEVEL")]["offset"] == 737
