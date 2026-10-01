@@ -200,7 +200,7 @@ private struct PageView: View {
 
     var body: some View {
         let placed = page.parameters.filter(model.isVisible).compactMap { parameter in
-            parameter.position.map { Placed(parameter: parameter, x: $0.x, y: $0.y) }
+            model.position(of: parameter).map { Placed(parameter: parameter, x: $0.x, y: $0.y) }
         }
         let header = placed.filter { $0.y < Self.headerBottom }.sorted { $0.x < $1.x }
         let rows = Self.rows(placed.filter { $0.y >= Self.headerBottom })
@@ -235,12 +235,13 @@ private struct PageView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    // A knob is as wide as Tone Studio's step between dials, a slider as its step between bands; labels wrap inside.
+    // With the row's spacing, a knob takes Tone Studio's step between dials (96 px) and a slider its step between bands
+    // (48 px); labels wrap inside.
     @ViewBuilder
     private func cell(_ parameter: Parameter) -> some View {
         switch parameter.control {
         case .knob: ControlView(model: model, parameter: parameter).frame(width: 88)
-        case .slider: ControlView(model: model, parameter: parameter).frame(width: 44)
+        case .slider: ControlView(model: model, parameter: parameter).frame(width: 40)
         default: ControlView(model: model, parameter: parameter).fixedSize()
         }
     }

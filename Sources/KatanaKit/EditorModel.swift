@@ -104,6 +104,8 @@ public final class EditorModel {
     @ObservationIgnored private var updatesTask: Task<Void, Never>?
     @ObservationIgnored private var retryTask: Task<Void, Never>?
     @ObservationIgnored private var retries = 0
+    @ObservationIgnored private var lastChange: Task<Void, Never>?
+    @ObservationIgnored private var upcoming: AmpSession?
     private let logger = Logger(subsystem: "io.github.pwhofman.tanto", category: "editor")
 
     /// Creates a model that is not connected.
@@ -137,10 +139,33 @@ public final class EditorModel {
     ///   - transport: The connection to the amp.
     ///   - timing: Message spacing and read timeout.
     func connect(_ transport: any MIDITransport, timing: SessionTiming) async {
-        await disconnect()
-        connection = .connecting
+        // The session exists from now on, so that a Panic pressed before this connect's turn reaches it: the session
+        // sends VOLUME 0 as soon as editor mode is on.
         let session = AmpSession(transport: transport, timing: timing)
+        upcoming = session
+        connection = .connecting
+        await serially { [self] in await connectNow(session) }
+    }
+
+    /// Runs connection changes one after another: connects and disconnects never overlap, so a connect cannot finish
+    /// after a newer one or after a disconnect, and the amp gets the editor-mode flags in order.
+    private func serially(_ change: @escaping @MainActor () async -> Void) async {
+        let previous = lastChange
+        let task = Task { @MainActor in
+            await previous?.value
+            await change()
+        }
+        lastChange = task
+        await task.value
+    }
+
+    private func connectNow(_ session: AmpSession) async {
+        await letGo()
+        connection = .connecting
         self.session = session
+        if upcoming === session {
+            upcoming = nil
+        }
         updatesTask = Task { [weak self] in
             for await update in session.updates {
                 self?.apply(update)
@@ -193,23 +218,26 @@ public final class EditorModel {
 
     private func refresh(_ ports: any AmpPorts, timing: SessionTiming, retryDelay: Duration) async {
         guard !Task.isCancelled else { return }
-        guard ports.isPresent else {
-            if connection != .notConnected {
-                await forget()
+        // The check and the connect are one change, so that a port change and a retry cannot both connect.
+        await serially { [self] in
+            guard ports.isPresent else {
+                if connection != .notConnected {
+                    await forget()
+                }
+                return
             }
-            return
-        }
-        switch connection {
-        case .connecting, .connected:
-            return
-        case .notConnected, .failed:
-            break
-        }
-        do {
-            guard let transport = try ports.open() else { return }
-            await connect(transport, timing: timing)
-        } catch {
-            connection = .failed(Self.message(for: error))
+            switch connection {
+            case .connecting, .connected:
+                return
+            case .notConnected, .failed:
+                break
+            }
+            do {
+                guard let transport = try ports.open() else { return }
+                await connectNow(AmpSession(transport: transport, timing: timing))
+            } catch {
+                connection = .failed(Self.message(for: error))
+            }
         }
         guard case .failed = connection, retries < 5 else { return }
         retries += 1
@@ -237,8 +265,13 @@ public final class EditorModel {
         connection = .notConnected
     }
 
-    /// Stops the guard, switches editor mode off if the amp is still there, and forgets the connection.
+    /// Stops the guard, switches editor mode off if the amp is still there, and forgets the connection. A connect that
+    /// is running finishes first.
     public func disconnect() async {
+        await serially { [self] in await letGo() }
+    }
+
+    private func letGo() async {
         await safety?.stop()
         updatesTask?.cancel()
         updatesTask = nil
@@ -296,6 +329,14 @@ public final class EditorModel {
         parameter.isVisible { values[$0] }
     }
 
+    /// Where Tone Studio puts a parameter on its page for the current types.
+    ///
+    /// - Parameter parameter: A parameter.
+    /// - Returns: Its position, or `nil` if only the front panel shows it.
+    public func position(of parameter: Parameter) -> Parameter.Position? {
+        parameter.position { values[$0] }
+    }
+
     /// The ceiling of a guarded parameter.
     ///
     /// - Parameter parameter: A parameter.
@@ -321,6 +362,39 @@ public final class EditorModel {
         } catch {
             refusals[parameter.offset] = Self.message(for: error)
         }
+    }
+
+    /// CONTOUR as Tone Studio's knob shows it: 0 for OFF, 1–3 for the selected contour; `nil` before the live patch is
+    /// read.
+    public var contour: Int? {
+        guard let (onOff, select) = contourParameters, let on = value(of: onOff), let selected = value(of: select)
+        else {
+            return nil
+        }
+        return on == onOff.minimum ? 0 : selected - select.minimum + 1
+    }
+
+    /// Sets CONTOUR as Tone Studio's knob does: it switches CONTOUR on or off if that changes, then selects the contour,
+    /// both through `SafetyGuard`. After a Panic during the switch, the selection is left as it was.
+    ///
+    /// - Parameter choice: 0 for OFF, 1–3 for a contour.
+    public func setContour(_ choice: Int) async {
+        guard let (onOff, select) = contourParameters else { return }
+        let panics = panicCount
+        let on = (value(of: onOff) ?? onOff.minimum) != onOff.minimum
+        if (choice > 0) != on {
+            await set(onOff, to: choice > 0 ? onOff.maximum : onOff.minimum)
+        }
+        guard choice > 0, panicCount == panics else { return }
+        await set(select, to: select.minimum + choice - 1)
+    }
+
+    // CONTOUR SW and CONTOUR SELECT, which the panel's CONTOUR knob sets together.
+    private var contourParameters: (Parameter, Parameter)? {
+        guard let onOff = map.parameter(block: "Patch_1", prm: "PRM_CONTOUR_SW"),
+            let select = map.parameter(block: "Patch_1", prm: "PRM_CONTOUR_SELECT")
+        else { return nil }
+        return (onOff, select)
     }
 
     /// The LED that shows a panel button's state.
@@ -352,9 +426,18 @@ public final class EditorModel {
     /// as soon as the amp is in editor mode.
     public func panic() async {
         panicCount += 1
+        let volumeKnob = map.parameter(block: "Status", prm: "PRM_KNOB_POS_VOLUME")
+        // A session still waiting for its turn to connect sends VOLUME 0 as soon as editor mode is on.
+        if let upcoming, let volumeKnob {
+            do {
+                try await upcoming.panic(volumeKnob: volumeKnob)
+            } catch {
+                logger.error("Panic not sent: \(error)")
+            }
+        }
         if let safety {
             await safety.panic()
-        } else if let session, let volumeKnob = map.parameter(block: "Status", prm: "PRM_KNOB_POS_VOLUME") {
+        } else if let session, let volumeKnob {
             do {
                 try await session.panic(volumeKnob: volumeKnob)
             } catch {

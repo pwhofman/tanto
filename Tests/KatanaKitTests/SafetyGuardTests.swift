@@ -234,7 +234,7 @@ func aKnobTurnedOnTheAmpEndsTheRamp(delay: Int) async throws {
         prm: real.prm, name: real.name, block: real.block, offset: real.offset, encoding: real.encoding, minimum: 0,
         maximum: 127, rawOffset: 0, initial: nil, guarded: false, louder: nil, written: true, kind: .numeric,
         section: "amp", label: real.label, options: nil, valueLabels: nil, format: nil, visibleWhen: nil,
-        control: .knob, page: nil, position: nil, panel: nil)
+        control: .knob, page: nil, position: nil, placements: nil, panel: nil)
     await #expect(throws: SafetyError.notWritable(real.prm)) { try await rig.safety.set(forged, to: 120) }
     // Booster type 24 is in range but not in Tone Studio's menu.
     await #expect(throws: SafetyError.outOfRange("PRM_ODDS_TYPE", 24)) {

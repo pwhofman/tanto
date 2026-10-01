@@ -104,6 +104,7 @@ def test_build_table_from_snippet() -> None:
         "control": None,
         "page": None,
         "position": None,
+        "placements": None,
         "panel": None,
         "kind": "numeric",
         "section": None,

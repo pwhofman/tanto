@@ -147,6 +147,14 @@ class ConditionRow(TypedDict):
     values: list[int]
 
 
+class PlacementRow(TypedDict):
+    """Where a parameter sits on its page while ``visibleWhen`` holds (``None``: always), in Tone Studio's pixels."""
+
+    x: int
+    y: int
+    visibleWhen: list[ConditionRow] | None
+
+
 class ParameterRow(TypedDict):
     """A parameter of the patch layout; ``offset`` is linear and relative to the patch base."""
 
@@ -165,6 +173,7 @@ class ParameterRow(TypedDict):
     control: str | None
     page: str | None
     position: PositionRow | None
+    placements: list[PlacementRow] | None
     panel: PositionRow | None
     kind: str
     section: str | None
@@ -670,6 +679,7 @@ def build_table(source: str) -> Table:
                 "control": None,
                 "page": None,
                 "position": None,
+                "placements": None,
                 "panel": None,
                 "kind": "numeric",
                 "section": None,
@@ -748,6 +758,26 @@ def _place(controls: list[_Control], control: str | None, on_panel: bool) -> tup
         return None
     _, _, root, x, y = min(placed, key=lambda p: p[:2])
     return root.removeprefix("editor-").removesuffix("-page"), PositionRow(x=x, y=y)
+
+
+def _placements(row: ParameterRow, controls: list[_Control], root: str) -> list[PlacementRow] | None:
+    """Where a parameter sits on its page for each type, if Tone Studio puts it in different places for different types.
+
+    Returns:
+        A placement per position, with the types it holds for; ``None`` if the parameter stays in one place.
+    """
+    alternatives: dict[tuple[int, int], list[tuple[tuple[int, tuple[int, ...]], ...]]] = {}
+    for c in controls:
+        if c.written and c.position is not None and c.position[0] == root:
+            alternatives.setdefault((c.position[1], c.position[2]), []).append(c.conditions)
+    if len(alternatives) < 2:
+        return None
+    return [
+        PlacementRow(
+            x=x, y=y, visibleWhen=None if any(not a for a in conditions) else _union_conditions(row, conditions)
+        )
+        for (x, y), conditions in alternatives.items()
+    ]
 
 
 def _string(item: dict[str, object], key: str) -> str | None:
@@ -868,6 +898,7 @@ def _merge(row: ParameterRow, controls: list[_Control]) -> ParameterRow:
     merged["control"] = control_of(merged, {c.control_class for c in controls if c.written and c.control_class})
     page = _place(controls, merged["control"], on_panel=False)
     merged["page"], merged["position"] = page if page else (None, None)
+    merged["placements"] = _placements(row, controls, f"editor-{page[0]}-page") if page else None
     panel = _place(controls, merged["control"], on_panel=True)
     merged["panel"] = panel[1] if panel else None
     # The guard rule also reads Tone Studio's label (spec 5.2); it is the only name of some entries.

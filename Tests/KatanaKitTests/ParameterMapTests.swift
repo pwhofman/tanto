@@ -93,5 +93,29 @@ import Testing
     let gain = try #require(map.parameter(block: "Status", prm: "PRM_KNOB_POS_GAIN"))
     #expect(gain.panel == Parameter.Position(x: 124, y: 88) && gain.page == nil)
     #expect(try #require(map.parameter(block: "Patch_2", prm: "PRM_FXBOX_ASGN_BOOSTER_G")).page == "effects-booster")
+    // EFFECT LEVEL moves with DELAY TYPE, as on Tone Studio's pages: DIGITAL, PAN, MODULATE.
+    let level = try #require(map.parameter(block: "Delay(1)", prm: "PRM_DLY_COMMON_EFFECT_LEVEL"))
+    let type = try #require(map.parameter(block: "Delay(1)", prm: "PRM_DLY_TYPE"))
+    for (delayType, x) in [(0, 322), (1, 418), (9, 514)] {
+        #expect(level.position { $0 == type.offset ? delayType : nil } == Parameter.Position(x: x, y: 101))
+    }
     #expect(try #require(map.parameter(block: "Fx(1)", prm: "PRM_FX1_GEQ_BAND1")).control == .slider)
+}
+
+@Test func theWindowsFixedControlsAreInTheTable() throws {
+    let map = try ParameterMap.bundled()
+    // The ids that Tanto's front panel shows (Sources/Tanto/FrontPanel.swift); each needs exactly one panel control,
+    // or the window stops.
+    let panel = [
+        "PRM_KNOB_POS_TYPE", "PRM_KNOB_POS_GAIN", "PRM_KNOB_POS_VOLUME", "PRM_KNOB_POS_BASS", "PRM_KNOB_POS_MIDDLE",
+        "PRM_KNOB_POS_TREBLE", "PRM_KNOB_POS_BOOST", "PRM_KNOB_POS_MOD", "PRM_KNOB_POS_FX", "PRM_KNOB_POS_DELAY",
+        "PRM_KNOB_POS_REVERB", "PRM_CABINET_RESONANCE", "PRM_KNOB_POS_PRESENCE", "PRM_SOLO_SW", "PRM_SOLO_LEVEL",
+        "PRM_CONTOUR_SW", "PRM_CONTOUR_SELECT",
+    ]
+    for id in panel {
+        #expect(map.table.parameters.count { $0.prm == id && $0.panel != nil } == 1, "\(id)")
+    }
+    // The CHAIN page draws a diagram for each of the values 0–6.
+    let chain = try #require(map.parameter(block: "Patch_2", prm: "PRM_CHAIN_PTN"))
+    #expect(chain.options?.map(\.value) == Array(0...6))
 }

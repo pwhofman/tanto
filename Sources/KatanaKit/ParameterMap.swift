@@ -59,6 +59,9 @@ public struct Parameter: Codable, Sendable, Hashable {
     public let page: String?
     /// Where Tone Studio puts the parameter on its page; `nil` if only the front panel shows it.
     public let position: Position?
+    /// Where Tone Studio puts the parameter for each type, if it moves between types, as EFFECT LEVEL does on the DELAY
+    /// page; `nil` if it stays at `position`.
+    public let placements: [Placement]?
     /// Where Tone Studio puts the parameter on the front panel; `nil` if the panel does not show it.
     public let panel: Position?
 
@@ -113,6 +116,16 @@ public struct Parameter: Codable, Sendable, Hashable {
     }
 
     /// A condition on another parameter, typically an effect type.
+    /// A place on the page for some of the types.
+    public struct Placement: Codable, Sendable, Hashable {
+        /// Distance from the page's left, in Tone Studio's pixels.
+        public let x: Int
+        /// Distance from the page's top, in Tone Studio's pixels.
+        public let y: Int
+        /// The conditions under which the parameter sits here; `nil` means always.
+        public let visibleWhen: [Condition]?
+    }
+
     public struct Condition: Codable, Sendable, Hashable {
         /// Offset of the parameter the condition is on.
         public let offset: Int

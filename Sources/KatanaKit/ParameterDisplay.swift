@@ -38,7 +38,21 @@ extension Parameter {
     /// - Parameter value: The displayed value of the parameter at an offset, or `nil` if unknown.
     /// - Returns: `true` if every condition of `visibleWhen` holds; an unknown value fails its condition.
     public func isVisible(_ value: (Int) -> Int?) -> Bool {
-        (visibleWhen ?? []).allSatisfy { condition in
+        Self.hold(visibleWhen, value)
+    }
+
+    /// Where Tone Studio puts the parameter on its page for the current types.
+    ///
+    /// - Parameter value: The displayed value of the parameter at an offset, or `nil` if unknown.
+    /// - Returns: The first of `placements` whose conditions hold, otherwise `position`.
+    public func position(_ value: (Int) -> Int?) -> Position? {
+        guard let placement = placements?.first(where: { Self.hold($0.visibleWhen, value) }) else { return position }
+        return Position(x: placement.x, y: placement.y)
+    }
+
+    // Whether every condition holds; an unknown value fails its condition.
+    private static func hold(_ conditions: [Condition]?, _ value: (Int) -> Int?) -> Bool {
+        (conditions ?? []).allSatisfy { condition in
             value(condition.offset).map(condition.values.contains) ?? false
         }
     }

@@ -55,6 +55,7 @@ def row(prm: str, minimum: int = 0, maximum: int = 100, encoding: str = "int1x7"
         "control": None,
         "page": None,
         "position": None,
+        "placements": None,
         "panel": None,
         "kind": "numeric",
         "section": None,
@@ -218,11 +219,25 @@ def test_real_controls() -> None:
     assert [by_offset[o]["visibleWhen"] for o in (67, 77)] == [[{"offset": 65, "values": [v]}] for v in (0, 1)]
     assert by_offset[1976]["visibleWhen"] == [{"offset": 791, "values": [1]}, {"offset": 790, "values": [1]}]
 
+    # Tone Studio moves some parameters between types: EFFECT LEVEL on the DELAY page, for DELAY and DELAY2 alike, and
+    # on the REVERB page for SPRING. A parameter that stays put has no placements.
+    for offset, type_offset in ((646, 641), (678, 673)):
+        assert by_offset[offset]["placements"] == [
+            {"x": 322, "y": 101, "visibleWhen": [{"offset": type_offset, "values": [0, 2, 6, 7, 8]}]},
+            {"x": 418, "y": 101, "visibleWhen": [{"offset": type_offset, "values": [1]}]},
+            {"x": 514, "y": 101, "visibleWhen": [{"offset": type_offset, "values": [9, 10]}]},
+        ]
+    spring = [p for p in by_offset[712]["placements"] or [] if p["visibleWhen"] == [{"offset": 705, "values": [5]}]]
+    assert [(p["x"], p["y"]) for p in spring] == [(610, 101)]
+    assert by_key[("Patch_0", "PRM_ODDS_DRIVE")]["placements"] is None
+    for p in parameters:
+        assert p["placements"] is None or (p["page"] is not None and len(p["placements"]) > 1)
+
     # A menu of two values has its options too, and so do radio buttons: the CHAIN patterns.
     assert by_offset[65]["options"] == [{"value": 0, "label": "PARAMETRIC EQ"}, {"value": 1, "label": "GE-10"}]
     chains = ["CHAIN1", "CHAIN2-1", "CHAIN3-1", "CHAIN4-1", "CHAIN2-2", "CHAIN3-2", "CHAIN4-2"]
     assert by_key[("Patch_2", "PRM_CHAIN_PTN")]["options"] == [{"value": v, "label": c} for v, c in enumerate(chains)]
-    # CONTOUR's hidden radio button on its page has no options to give.
+    # CONTOUR's hidden radio button on its page has one empty option; it is not written, so the option is not taken.
     assert by_key[("Patch_1", "PRM_CONTOUR_SELECT")]["options"] is None
     # The label under a control wins over the one its description names, which is wrong for the EQs' HIGH-MID GAIN.
     # Two solo controls with generated ids have their labels beside them.

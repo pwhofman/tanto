@@ -31,35 +31,23 @@ struct ControlView: View {
     }
 }
 
-/// Tone Studio's CONTOUR knob: OFF, or contour 1, 2 or 3. Like Tone Studio, it switches CONTOUR on or off if that
-/// changes, then selects the contour.
+/// Tone Studio's CONTOUR knob: OFF, or contour 1, 2 or 3. `EditorModel.setContour(_:)` sets the two parameters behind
+/// it as Tone Studio does.
 struct ContourKnob: View {
     let model: EditorModel
 
-    private var onOff: Parameter { model.map.panelParameter("PRM_CONTOUR_SW") }
-    private var select: Parameter { model.map.panelParameter("PRM_CONTOUR_SELECT") }
-
     var body: some View {
-        let on = (model.value(of: onOff) ?? onOff.minimum) != onOff.minimum
+        let onOff = model.map.panelParameter("PRM_CONTOUR_SW")
+        let select = model.map.panelParameter("PRM_CONTOUR_SELECT")
         let contours = select.maximum - select.minimum + 1
         VStack(spacing: 3) {
             KnobView(
-                model: model, value: on ? (model.value(of: select) ?? select.minimum) - select.minimum + 1 : 0,
-                range: 0...contours, ceiling: nil, positions: contours + 1, label: "CONTOUR", vertical: false,
-                text: { $0 == 0 ? "OFF" : "\($0)" }, set: choose)
+                model: model, value: model.contour ?? 0, range: 0...contours, ceiling: nil, positions: contours + 1,
+                label: "CONTOUR", vertical: false, text: { $0 == 0 ? "OFF" : "\($0)" },
+                set: { await model.setContour($0) })
             if let refusal = model.refusals[onOff.offset] ?? model.refusals[select.offset] {
                 Text(refusal).font(.caption2).foregroundStyle(.red).multilineTextAlignment(.center)
             }
-        }
-    }
-
-    private func choose(_ contour: Int) async {
-        let on = (model.value(of: onOff) ?? onOff.minimum) != onOff.minimum
-        if (contour > 0) != on {
-            await model.set(onOff, to: contour > 0 ? onOff.maximum : onOff.minimum)
-        }
-        if contour > 0 {
-            await model.set(select, to: select.minimum + contour - 1)
         }
     }
 }

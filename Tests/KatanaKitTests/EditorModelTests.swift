@@ -214,3 +214,51 @@ private func modelWithLoudChannel() async throws -> (EditorModel, SimulatedAmp, 
     #expect(model.loadBackup(Data("{}".utf8)) == nil)
     #expect(model.librarianMessage != nil)
 }
+
+/// The values that DT1s wrote to a one-byte `parameter` of the live patch, in order.
+private func writes(to parameter: Parameter, in amp: SimulatedAmp) -> [Int] {
+    let address = Address.temporaryPatch.advanced(by: parameter.offset)
+    return amp.received.compactMap { received in
+        (parameter.minimum...parameter.maximum).first { value in
+            received.message == SysEx.dt1(address, data: [UInt8(value + parameter.rawOffset)], deviceID: 0)
+        }
+    }
+}
+
+@MainActor
+@Test func contourSwitchesOnThenSelectsAsToneStudioDoes() async throws {
+    let (model, amp) = try await connectedModel()
+    let onOff = try #require(model.map.parameter(block: "Patch_1", prm: "PRM_CONTOUR_SW"))
+    let select = try #require(model.map.parameter(block: "Patch_1", prm: "PRM_CONTOUR_SELECT"))
+    #expect(model.contour == 0)
+    // OFF to 2: the switch, then the selection.
+    await model.setContour(2)
+    await model.settle()
+    #expect(try await eventually { model.contour == 2 })
+    #expect(writes(to: onOff, in: amp) == [1] && writes(to: select, in: amp) == [1])
+    // 2 to 3: only the selection.
+    await model.setContour(3)
+    await model.settle()
+    #expect(try await eventually { model.contour == 3 })
+    #expect(writes(to: onOff, in: amp) == [1] && writes(to: select, in: amp) == [1, 2])
+    // 3 to OFF: only the switch.
+    await model.setContour(0)
+    await model.settle()
+    #expect(try await eventually { model.contour == 0 })
+    #expect(writes(to: onOff, in: amp) == [1, 0] && writes(to: select, in: amp) == [1, 2])
+}
+
+@MainActor
+@Test func aPanicRightAfterChoosingAContourSendsNeitherWrite() async throws {
+    let (model, amp) = try await connectedModel()
+    let onOff = try #require(model.map.parameter(block: "Patch_1", prm: "PRM_CONTOUR_SW"))
+    let select = try #require(model.map.parameter(block: "Patch_1", prm: "PRM_CONTOUR_SELECT"))
+    async let choosing: Void = model.setContour(2)
+    // While the switch waits for its soft switch.
+    try await Task.sleep(for: .milliseconds(5))
+    await model.panic()
+    await choosing
+    await model.settle()
+    #expect(writes(to: onOff, in: amp).isEmpty && writes(to: select, in: amp).isEmpty)
+    #expect(model.contour == 0)
+}
