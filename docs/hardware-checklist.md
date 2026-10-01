@@ -143,5 +143,32 @@ Afterwards, turn MASTER to minimum, then switch to another channel and back.
 
 ## Check 3: librarian
 
-Specified in plan 3: after a verified backup, saving on the amp (WRITE) to see its notification, saving the live sound
-to a channel the user chooses, renaming it, and restoring the backup.
+Before starting: POWER CONTROL at 0.5 W, MASTER at minimum, BOSS TONE STUDIO closed, `build/Tanto.app` built with
+`scripts/build-app.sh`. Pick a scratch channel whose sound may be overwritten until the restore in step 6.
+
+1. File › Back Up Channels…, and save the file. Tanto reads the file back and reports that it reads back the same.
+   Nothing is written to the amp before this step has succeeded.
+2. Click B2 (VOLUME 88) in the sidebar. A dialog lists the front-panel volumes above the ceiling; Cancel keeps the
+   current channel. Then click a channel without such values: Tanto switches at once.
+3. Save the current channel onto itself with the amp's own controls. Tanto notices the save and reads the name again.
+4. Change something small in Tanto, e.g. BASS. Then choose "Save Live Sound Here…" in the scratch channel's context
+   menu: the amp confirms, and Tanto selects the scratch channel.
+5. Rename the scratch channel from its context menu. The sidebar shows the new name.
+6. File › Restore Channels…, with the file of step 1. Tanto writes A1 to B4, reads them back and reports no
+   difference. The scratch channel has its own name and sound again.
+
+Afterwards, switch to another channel and back.
+
+### Results
+
+| Item | Result |
+|---|---|
+| Backup saved and read back the same | |
+| B2: dialog lists the volumes above the ceiling; Cancel keeps the channel | |
+| A channel without such values switches at once | |
+| After Tanto's select: did the amp send its channel number and dump? (log) | |
+| A save made on the amp: Tanto reads the name again | |
+| Save Live Sound Here…: confirmed, channel selected | |
+| Rename: new name in the sidebar | |
+| Restore: written, read back the same; scratch channel restored | |
+| The dialogs' look: anything unclear or wrong | |

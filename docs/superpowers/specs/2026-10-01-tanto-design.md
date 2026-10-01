@@ -149,8 +149,8 @@ Data flow:
    that Tanto itself wrote.
 2. Every outgoing DT1 is one of: a parameter write that `SafetyGuard` produced from a user action; a whitelisted command
    (`7F 00 00 01` editor mode, `7F 00 01 00` patch select, `7F 00 01 04` patch write); a press of the VARIATION or a
-   colour button (`7F 01 01 00` to `05`, 3.5), which `SafetyGuard` soft-switches (5.3); a librarian write (save,
-   rename, restore) after confirmation.
+   colour button (`7F 01 01 00` to `05`, 3.5), which `SafetyGuard` soft-switches (5.3); a librarian write after
+   confirmation: a save, or a rename or restore that writes stored channels 1–8 at `10 0n 00 00` directly.
 3. Validation before sending: the address belongs to `ParameterMap`, the value is within range, the encoding and the
    checksum are correct. Anything else is refused and logged. The UI has no way to send raw SysEx.
 4. At most one message per 20 ms. A slider drag sends only its latest value, and after Panic it sends nothing until
@@ -202,16 +202,26 @@ Patch-name edits are not soft-switched.
 
 ### 5.4 Channels and memory
 
-- Switching channels from the app: if a guarded value stored in the target channel is above its ceiling, a dialog lists
-  those values and asks first, with Cancel as the default button. If the live patch has unsaved edits made in the app, a
-  dialog asks before discarding them. Otherwise the switch happens directly, as with the amp's own channel buttons. A
-  channel switch cannot be faded, because the amp loads the stored volume at once.
-- Saving the live sound to channel n (1–8) asks before overwriting. The sound does not change.
-- Renaming writes the 16-character name field. The sound does not change.
+- Switching channels from the app uses Tone Studio's select command (3.3), after up to two questions:
+  1. If the live patch has unsaved edits made in the app, a dialog asks before discarding them.
+  2. Tanto reads the target channel from the amp. If a front-panel volume stored there lies above its ceiling, a dialog
+     lists those values and asks first, with Cancel as the default button. The front-panel volumes are the VOLUME, GAIN,
+     BOOSTER, MOD, FX, DELAY and REVERB knobs and the amp volume.
+
+  Otherwise the switch happens directly, as with the amp's own channel buttons. A channel switch cannot be faded,
+  because the amp loads the stored volume at once.
+- Saving the live sound to channel n (1–8) asks before overwriting. It waits until the guard's ramps are done, sends
+  Tone Studio's WRITE and waits for the amp's confirmation, then selects channel n as Tone Studio does. The sound does
+  not change.
+- Renaming writes the 16-character name field of the stored channel, and for the current channel also the live name.
+  The sound does not change.
 - Restore asks you to turn MASTER to minimum first, writes channels 1–8, and selects no channel afterwards.
 
-Hardware check 1 showed that saved channels exceed the ceiling (B2 has amp VOLUME 88). The user chose to keep the rules
-above unchanged: every switch to such a channel asks first, and effect switches there need amp VOLUME below the ceiling.
+Hardware check 1 showed that saved channels exceed the ceiling (B2 has amp VOLUME 88). The user chose to keep these
+rules: a switch to such a channel asks first, and effect switches there need VOLUME at or below the ceiling. During plan
+3 the user narrowed the switch question to the front-panel volumes: Tone Studio's defaults alone put 56 guarded values
+above the 50 % ceiling in every channel, mostly levels of effect types the channel does not use, so a question about
+all of them would come with almost every switch.
 
 ### 5.5 Panic
 
@@ -282,14 +292,17 @@ One window:
 
 ## 7. Librarian
 
-- Cache: after connecting, the stored patches are read in the background; 5.4 and backups depend on them. A channel is
-  re-read when the amp reports a patch write.
+- Reads: the names are read when connecting. A channel is read from the amp right before a switch to it, and channels
+  1–8 when backing up, so no check rests on old data. When the amp reports a save, the channel's name is read again.
+  Stored channels have the live patch's layout at `10 0n 00 00`.
 - Backup: channels 1–8 go into a JSON file, `<name>.tanto-backup.json`:
-  `{"format": 1, "model": "KATANA MkII", "created": <ISO 8601>, "revision": <editor revision>,
-  "channels": [{"slot": 1, "name": "…", "blocks": {"Patch_0": "<hex>", …}}, …]}`.
-- Restore: checks the format, the model and every block's length against `ParameterMap`; shows the 8 names; asks as in
-  5.4; writes the blocks as paced DT1 messages of at most 128 data bytes; reads everything back and reports any
-  difference.
+  `{"format": 1, "model": "KATANA MkII", "created": <ISO 8601>,
+  "channels": [{"slot": 1, "name": "…", "blocks": {"Patch_0": "<hex>", …}}, …]}`. The parameter table's block names
+  and lengths describe the layout; the amp does not answer the editor-revision read (hardware check 1). After saving,
+  Tanto reads the file back and compares it with what it read from the amp.
+- Restore: checks the format, the model, the slots, every block, its length and its bytes, and the names, before anything
+  is written; shows the 8 names; asks as in 5.4; writes the blocks into the stored channels directly, as Tone Studio's
+  own restore does, as paced DT1 messages of at most 128 data bytes; reads everything back and reports any difference.
 
 ## 8. Error handling
 
