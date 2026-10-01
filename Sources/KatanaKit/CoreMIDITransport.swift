@@ -62,10 +62,22 @@ public final class CoreMIDITransport: MIDITransport {
     /// - Returns: The main port.
     /// - Throws: `CoreMIDIError.katanaNotFound` if there is none, `.ambiguous` if there are several.
     static func mainPort(in endpoints: [MIDIEndpoint]) throws -> MIDIEndpoint {
-        let matches = endpoints.filter { $0.name.caseInsensitiveCompare("KATANA") == .orderedSame }
+        let matches = endpoints.filter(isMainPort)
         guard let port = matches.first else { throw CoreMIDIError.katanaNotFound }
         guard matches.count == 1 else { throw CoreMIDIError.ambiguous(matches.map(\.name)) }
         return port
+    }
+
+    /// Whether there is a main port at all; with several, `mainPort(in:)` reports the ambiguity.
+    ///
+    /// - Parameter endpoints: All sources or all destinations.
+    /// - Returns: `true` if an endpoint is named "KATANA".
+    static func hasMainPort(in endpoints: [MIDIEndpoint]) -> Bool {
+        endpoints.contains(where: isMainPort)
+    }
+
+    private static func isMainPort(_ endpoint: MIDIEndpoint) -> Bool {
+        endpoint.name.caseInsensitiveCompare("KATANA") == .orderedSame
     }
 
     /// Opens a connection.

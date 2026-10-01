@@ -209,7 +209,11 @@ func run(_ options: Options) async throws {
             try await readAndListen(session, map: map, listenSeconds: options.listenSeconds)
         }
     } catch {
-        try? await session.disconnect()
+        do {
+            try await session.disconnect()
+        } catch let disconnectError {
+            print("editor mode not switched off: \(disconnectError)")
+        }
         throw error
     }
     try await session.disconnect()

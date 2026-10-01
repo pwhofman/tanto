@@ -43,9 +43,10 @@ public final class CoreMIDIPorts: AmpPorts {
         MIDIClientDispose(client)
     }
 
+    // Several main ports count as present, so that `open()` reports the ambiguity instead of "not connected".
     public var isPresent: Bool {
-        (try? CoreMIDITransport.mainPort(in: CoreMIDITransport.sources())) != nil
-            && (try? CoreMIDITransport.mainPort(in: CoreMIDITransport.destinations())) != nil
+        CoreMIDITransport.hasMainPort(in: CoreMIDITransport.sources())
+            && CoreMIDITransport.hasMainPort(in: CoreMIDITransport.destinations())
     }
 
     public func open() throws -> (any MIDITransport)? {

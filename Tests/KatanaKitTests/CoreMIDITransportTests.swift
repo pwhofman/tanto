@@ -19,3 +19,9 @@ import Testing
         try CoreMIDITransport.mainPort(in: ports)
     }
 }
+
+@Test func twoMainPortsCountAsPresentSoThatConnectingReportsTheAmbiguity() {
+    #expect(
+        CoreMIDITransport.hasMainPort(in: [MIDIEndpoint(name: "KATANA", ref: 1), MIDIEndpoint(name: "katana", ref: 3)]))
+    #expect(!CoreMIDITransport.hasMainPort(in: [MIDIEndpoint(name: "KATANA KATANA DAW CTRL", ref: 2)]))
+}
