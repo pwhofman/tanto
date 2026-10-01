@@ -98,9 +98,11 @@ VOLUME 88, above the ceiling.
 | Panic: VOLUME knob and amp volume after | 78 → 0; the amp volume followed to 0. |
 | Ramp: steps and spacing in the log | 0 → 10 in ten steps of 1, 21.8–32.7 ms apart; no message closer than 20.5 ms to the one before. |
 | No `amp` lines in steps 1–4 (the amp does not echo Tanto's writes) | The amp does not echo writes to `60 00 06 52`. After each one it reports the amp volume it derives from it, `60 00 00 28` (`PRM_PREAMP_A_LEVEL`), which Tanto does not write, so the guard does not take it for a knob turn and ramps go on. |
-| Audible ramp | |
-| Audible Panic | |
-| Colour LED order (OFF, GREEN, RED, YELLOW) matches the amp | |
+| Audible ramp | At a MASTER level the user chose: a smooth swell, no jump. VOLUME 10 → 20 in ten steps, 22–29 ms apart, 238 ms in all. |
+| Audible Panic | The sound stopped. VOLUME 20 → 0. |
+| Colour LED order (OFF, GREEN, RED, YELLOW) matches the amp | Moved to check 2b: it needs the app's colour menus. |
+
+Afterwards MASTER went back to minimum, and switching to another channel and back restored the stored sound.
 
 ## Check 3: librarian
 
