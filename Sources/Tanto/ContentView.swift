@@ -12,13 +12,34 @@ struct ContentView: View {
                 .navigationSplitViewColumnWidth(min: 180, ideal: 200)
         } detail: {
             EditorView(model: model)
+                .alert(
+                    "Channels", isPresented: Binding(get: { model.librarianMessage != nil }, set: { _ in })
+                ) {
+                    Button("OK") { model.dismissLibrarianMessage() }
+                } message: {
+                    Text(model.librarianMessage ?? "")
+                }
+        }
+        // Both answers come from the buttons; Esc picks Cancel.
+        .alert(
+            Self.switchTitle(model.pendingSwitch),
+            isPresented: Binding(get: { model.pendingSwitch != nil }, set: { _ in }),
+            presenting: model.pendingSwitch
+        ) { pending in
+            Button("Cancel", role: .cancel) { Task { await model.answerSwitch(false) } }
+                .keyboardShortcut(.defaultAction)
+            Button(pending.question == .unsavedEdits ? "Discard Changes" : "Switch", role: .destructive) {
+                Task { await model.answerSwitch(true) }
+            }
+        } message: { pending in
+            Text(Self.switchMessage(pending, model: model))
         }
         .toolbar {
             ToolbarItem(placement: .navigation) {
                 HStack {
                     ConnectionBadge(connection: model.connection)
                     if let channel = model.currentChannel {
-                        Text(ChannelList.label(channel)).monospaced()
+                        Text(EditorModel.channelLabel(channel)).monospaced()
                     }
                 }
                 .labelStyle(.titleAndIcon)
@@ -39,26 +60,109 @@ struct ContentView: View {
     }
 }
 
-/// The nine channels; switching them comes with the librarian (plan 3).
+extension ContentView {
+    static func switchTitle(_ pending: EditorModel.PendingSwitch?) -> String {
+        guard let pending else { return "" }
+        let channel = EditorModel.channelLabel(pending.slot)
+        return switch pending.question {
+        case .unsavedEdits: "Discard the changes to the live sound?"
+        case .valuesAboveCeiling: "\(channel) is louder than the ceiling"
+        }
+    }
+
+    static func switchMessage(_ pending: EditorModel.PendingSwitch, model: EditorModel) -> String {
+        let channel = EditorModel.channelLabel(pending.slot)
+        switch pending.question {
+        case .unsavedEdits:
+            return "Switching to \(channel) loads its stored sound, and the changes made in Tanto are lost."
+        case .valuesAboveCeiling(let values):
+            let lines = values.map { value in
+                let ceiling = model.ceiling(of: value.parameter).map { value.parameter.displayText(for: $0) } ?? "?"
+                return "\(value.parameter.label) \(value.parameter.displayText(for: value.value)) (ceiling \(ceiling))"
+            }
+            return "The amp loads these values at once when you switch:\n" + lines.joined(separator: "\n")
+        }
+    }
+}
+
+/// The nine channels. Clicking one switches to it; channels 1–8 can take the live sound and a new name.
 private struct ChannelList: View {
     let model: EditorModel
+    @State private var dialog: Dialog?
+    @State private var newName = ""
 
-    var body: some View {
-        List {
-            Section("Channels") {
-                ForEach(Array(model.channelNames.enumerated()), id: \.offset) { slot, name in
-                    HStack {
-                        Text(Self.label(slot)).monospaced().foregroundStyle(.secondary)
-                        Text(name)
-                    }
-                    .fontWeight(slot == model.currentChannel ? .bold : .regular)
-                }
+    private enum Dialog: Identifiable {
+        case save(Int)
+        case rename(Int)
+
+        var id: String {
+            switch self {
+            case .save(let slot): "save \(slot)"
+            case .rename(let slot): "rename \(slot)"
             }
         }
     }
 
-    static func label(_ slot: Int) -> String {
-        slot == 0 ? "PANEL" : "\(slot <= 4 ? "A" : "B")\((slot - 1) % 4 + 1)"
+    var body: some View {
+        // Selecting asks the model; the highlight follows the channel the amp reports, so a cancelled switch stays put.
+        List(
+            selection: Binding(
+                get: { model.currentChannel },
+                set: { slot in
+                    if let slot, slot != model.currentChannel { Task { await model.requestSwitch(to: slot) } }
+                })
+        ) {
+            Section("Channels") {
+                ForEach(Array(model.channelNames.enumerated()), id: \.offset) { slot, name in
+                    HStack {
+                        Text(EditorModel.channelLabel(slot)).monospaced().foregroundStyle(.secondary)
+                        Text(name)
+                    }
+                    .tag(slot)
+                    .contextMenu {
+                        if slot > 0 {
+                            Button("Save Live Sound Here…") { dialog = .save(slot) }
+                            Button("Rename…") {
+                                newName = name
+                                dialog = .rename(slot)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .disabled(model.connection != .connected)
+        .alert(
+            title, isPresented: Binding(get: { dialog != nil }, set: { if !$0 { dialog = nil } }), presenting: dialog
+        ) {
+            dialog in
+            switch dialog {
+            case .save(let slot):
+                Button("Cancel", role: .cancel) {}
+                Button("Save", role: .destructive) { Task { await model.save(to: slot) } }
+            case .rename(let slot):
+                TextField("Name", text: $newName)
+                Button("Cancel", role: .cancel) {}
+                Button("Rename") { Task { await model.rename(slot, to: newName) } }
+            }
+        } message: { dialog in
+            switch dialog {
+            case .save(let slot):
+                Text(
+                    "This replaces \(EditorModel.channelLabel(slot)) “\(model.channelNames[slot])”. The sound does not change."
+                )
+            case .rename:
+                Text("At most 16 characters. The sound does not change.")
+            }
+        }
+    }
+
+    private var title: String {
+        switch dialog {
+        case .save(let slot): "Save the live sound to \(EditorModel.channelLabel(slot))?"
+        case .rename(let slot): "Rename \(EditorModel.channelLabel(slot))"
+        case nil: ""
+        }
     }
 }
 

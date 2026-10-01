@@ -22,6 +22,9 @@ struct TantoApp: App {
                     await start()
                 }
         }
+        .commands {
+            LibraryCommands(model: model)
+        }
         Settings {
             SettingsView(model: model)
         }
