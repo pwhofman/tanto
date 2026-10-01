@@ -340,3 +340,32 @@ private func setLive(_ values: [(Int, Parameter)]) -> (SimulatedAmp, ParameterMa
         #expect(later.time - earlier.time >= .seconds(2) / 17)
     }
 }
+
+// A panel button changes the sound like a switch: VOLUME dips, the press goes out, VOLUME comes back (design spec, 5.3).
+@Test func aPanelButtonIsPressedWithTheSoftSwitch() async throws {
+    let map = try ParameterMap.bundled()
+    let volume = try knob("PRM_KNOB_POS_VOLUME")
+    let led = try knob("PRM_LED_STATE_BOOST")
+    let selection = try #require(map.parameter(block: "Patch_2", prm: "PRM_FXBOX_SEL_BOOST"))
+    let rig = try await Rig(prepare: setLive([(5, volume), (1, led), (0, selection)]))
+    let start = rig.amp.received.count
+    try await rig.safety.press(.booster)
+    await rig.safety.settle()
+    let addresses = rig.amp.received.dropFirst(start).compactMap { received -> Address? in
+        if case .dataSet(let address, _) = IncomingMessage(received.message) { address } else { nil }
+    }
+    #expect(addresses.prefix(2) == [.temporaryPatch.advanced(by: volume.offset), PanelButton.booster.address])
+    #expect(rig.writes(to: volume, after: start).map(\.value) == [0, 1, 2, 3, 4, 5])
+    #expect(await rig.session.liveValue(of: led) == 2)
+}
+
+@Test func aPanelButtonIsNotPressedWhileVolumeIsAboveTheCeiling() async throws {
+    let volume = try knob("PRM_KNOB_POS_VOLUME")
+    let rig = try await Rig(prepare: setLive(88, volume))
+    let before = rig.amp.received.count
+    await #expect(throws: SafetyError.volumeAboveCeiling(volume: 88, ceiling: 50)) {
+        try await rig.safety.press(.variation)
+    }
+    await rig.safety.settle()
+    #expect(rig.amp.received.count == before)
+}

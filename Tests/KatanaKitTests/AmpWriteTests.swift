@@ -98,3 +98,9 @@ private func dataSets(_ amp: SimulatedAmp) -> [(Address, [UInt8])] {
         #expect(later - earlier >= .milliseconds(20))
     }
 }
+
+@Test func pressesAPanelButtonAsToneStudioDoes() async throws {
+    let (amp, session, _) = try await connectedSession()
+    try await session.press(.booster)
+    #expect(amp.received.last?.message == SysEx.dt1(Address(packed: 0x7F01_0101), data: [0], deviceID: 0x00))
+}

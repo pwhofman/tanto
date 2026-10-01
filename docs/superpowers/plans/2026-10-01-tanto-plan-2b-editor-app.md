@@ -101,3 +101,20 @@ POWER CONTROL at 0.5 W and MASTER at minimum.
 The audible part, at a MASTER level the user chooses, repeats steps 2 and 3. Afterwards, switch channel and back.
 
 **Check:** results recorded in `docs/hardware-checklist.md` and committed.
+
+### 8. Panel buttons, after check 2b
+
+Check 2b showed that Tone Studio presses the VARIATION and colour buttons instead of writing their LEDs (spec 3.5). The
+user chose to add the presses, soft-switched like every other switch.
+
+- `PanelButton`: the six buttons, their addresses `7F 01 01 00` to `05` and their LEDs.
+- `AmpSession.press(_:)` sends `00` to the button's address, paced and with a basis like a write.
+- `SafetyGuard.press(_:)`: VOLUME dips to 0, the press goes out, VOLUME comes back. The press is dropped if VOLUME or the
+  button's LED changed on the amp meanwhile, and refused while VOLUME is above the ceiling.
+- The window shows a VARIATION button in the Amp section and a colour button in each effect section, with the LED state
+  the amp reports.
+- `SimulatedAmp` moves an effect that is on to its next colour and toggles VARIATION.
+
+**Check:** tests for the press message, the soft switch, its refusal, the simulated amp and the model; the randomized
+test presses buttons and checks that every press goes out at VOLUME 0. On the amp: step 6 of check 2b.
+

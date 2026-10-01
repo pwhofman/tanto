@@ -165,6 +165,15 @@ func randomRequestsWithChangesOnTheAmpKeepTheSafetyRules(seed: UInt64) async thr
     let kinds = Messages()
     let lastWrite = Mutex<[Int: ContinuousClock.Instant]>([:])
     transport.setHook { message in
+        // A panel button press changes the sound like a switch.
+        if case .dataSet(let address, _) = IncomingMessage(message),
+            PanelButton.allCases.contains(where: { $0.address == address })
+        {
+            kinds.append("press")
+            let knownVolume = session.assumeIsolated { $0.liveValue(of: volume) }
+            if knownVolume != 0 { violations.append("pressed \(address) while VOLUME was \(knownVolume ?? -1)") }
+            return
+        }
         guard case .dataSet(let address, let data) = IncomingMessage(message),
             let parameter = map.parameter(atOffset: address.linear - Address.temporaryPatch.linear),
             parameter.encoding != .ascii16
@@ -243,7 +252,9 @@ func randomRequestsWithChangesOnTheAmpKeepTheSafetyRules(seed: UInt64) async thr
                 ampHighest[knob.offset] = max(ampHighest[knob.offset] ?? value, value)
             }
             try await waitUntil { await session.ampReports(for: knob).count > before }
-        } else if roll < 12 {
+        } else if roll < 15, let button = PanelButton.allCases.randomElement(using: &random) {
+            _ = try? await safety.press(button)
+        } else if roll < 17 {
             // A channel button pressed on the amp.
             let slot = Int.random(in: 0...8, using: &random)
             noteAmpValues(amp.memory(at: .userPatch(slot), count: map.patchSize))
@@ -284,5 +295,6 @@ func randomRequestsWithChangesOnTheAmpKeepTheSafetyRules(seed: UInt64) async thr
     #expect(knobTurns > 30 && channelSwitches > 5 && panics > 5)
     #expect(kinds.all.filter { $0 == "rise" }.count > 50, "\(kinds.all.filter { $0 == "rise" }.count) rises")
     #expect(kinds.all.filter { $0 == "switch" }.count > 10, "\(kinds.all.filter { $0 == "switch" }.count) switches")
+    #expect(kinds.all.filter { $0 == "press" }.count > 3, "\(kinds.all.filter { $0 == "press" }.count) presses")
     #expect(statistics["stopped: amp report", default: 0] > 0, "\(statistics)")
 }

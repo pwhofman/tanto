@@ -4,9 +4,10 @@ import Synchronization
 /// An in-memory Katana MkII for tests and for development while the amp is off.
 ///
 /// It answers identity requests and RQ1 reads from its memory, stores DT1 writes, and records every message it
-/// receives with its arrival time. It copies what hardware check 1 showed of the real amp: it ignores RQ1 and DT1
+/// receives with its arrival time. It copies what hardware checks 1 and 2 showed of the real amp: it ignores RQ1 and DT1
 /// messages for another device ID, the VOLUME knob register sets the amp volume one to one, and a channel switch sends
-/// the channel number followed by the whole patch in messages of 241 bytes.
+/// the channel number followed by the whole patch in messages of 241 bytes. A colour-button press moves an effect that
+/// is on to its next colour, and a VARIATION press toggles VARIATION; both report what changed.
 public final class SimulatedAmp: MIDITransport {
     /// A message the simulated amp received.
     public struct Received: Sendable {
@@ -29,6 +30,8 @@ public final class SimulatedAmp: MIDITransport {
     private let patchSize: Int
     private let volumeKnobOffset: Int?
     private let ampVolumeOffset: Int?
+    // Per panel button: the offset of its LED, and for a colour button the offset of its colour selection.
+    private let buttonOffsets: [PanelButton: (led: Int, selection: Int?)]
 
     private struct State {
         var memory: [Int: UInt8]
@@ -51,6 +54,17 @@ public final class SimulatedAmp: MIDITransport {
         patchSize = map.patchSize
         volumeKnobOffset = map.parameter(block: "Status", prm: "PRM_KNOB_POS_VOLUME")?.offset
         ampVolumeOffset = map.parameter(block: "Patch_0", prm: "PRM_PREAMP_A_LEVEL")?.offset
+        var buttonOffsets: [PanelButton: (led: Int, selection: Int?)] = [:]
+        let selections = [PanelButton.booster: "BOOST", .mod: "MOD", .fx: "FX", .delay: "DELAY", .reverb: "REVERB"]
+        for button in PanelButton.allCases {
+            if let led = map.parameter(block: "Status", prm: button.led) {
+                let selection = selections[button].flatMap {
+                    map.parameter(block: "Patch_2", prm: "PRM_FXBOX_SEL_\($0)")
+                }
+                buttonOffsets[button] = (led.offset, selection?.offset)
+            }
+        }
+        self.buttonOffsets = buttonOffsets
         (incoming, continuation) = AsyncStream.makeStream(of: [UInt8].self)
         var memory: [Int: UInt8] = [:]
         let patches =
@@ -79,7 +93,7 @@ public final class SimulatedAmp: MIDITransport {
     /// - Parameter message: A complete SysEx message.
     public func send(_ message: [UInt8]) throws {
         let now = ContinuousClock.now
-        var report: [UInt8]?
+        var reports: [[UInt8]] = []
         let reply: [UInt8]? = state.withLock { state in
             state.received.append(Received(message: message, time: now))
             if message == SysEx.identityRequest {
@@ -93,13 +107,17 @@ public final class SimulatedAmp: MIDITransport {
             if message.count > 2, message[2] == deviceID,
                 case .dataSet(let address, let data) = IncomingMessage(message)
             {
+                if let button = PanelButton.allCases.first(where: { $0.address == address }) {
+                    reports = press(button, &state.memory)
+                    return nil
+                }
                 for (index, byte) in data.enumerated() {
                     state.memory[address.linear + index] = byte
                 }
                 if let turn = state.crossingKnobTurn, turn.address == address {
                     // The knob turn happened first on the amp, so Tanto's write wins there; its report arrives late.
                     state.crossingKnobTurn = nil
-                    report = SysEx.dt1(address, data: turn.value, deviceID: deviceID)
+                    reports = [SysEx.dt1(address, data: turn.value, deviceID: deviceID)]
                 }
                 if let volumeKnobOffset, let ampVolumeOffset,
                     address == Address.temporaryPatch.advanced(by: volumeKnobOffset), let volume = data.first
@@ -112,9 +130,31 @@ public final class SimulatedAmp: MIDITransport {
         if let reply {
             continuation.yield(reply)
         }
-        if let report {
+        for report in reports {
             continuation.yield(report)
         }
+    }
+
+    // Does what the amp's own button does and returns the reports of what changed.
+    private func press(_ button: PanelButton, _ memory: inout [Int: UInt8]) -> [[UInt8]] {
+        guard let offsets = buttonOffsets[button] else { return [] }
+        let live = Address.temporaryPatch.linear
+        let led = Int(memory[live + offsets.led] ?? 0)
+        let ledAddress = Address.temporaryPatch.advanced(by: offsets.led)
+        guard let selection = offsets.selection else {
+            let toggled = UInt8(1 - min(led, 1))
+            memory[live + offsets.led] = toggled
+            return [SysEx.dt1(ledAddress, data: [toggled], deviceID: deviceID)]
+        }
+        // An effect that is off stays off, as in Tone Studio's offline mode.
+        guard led > 0 else { return [] }
+        let next = (Int(memory[live + selection] ?? 0) + 1) % 3
+        memory[live + selection] = UInt8(next)
+        memory[live + offsets.led] = UInt8(next + 1)
+        return [
+            SysEx.dt1(Address.temporaryPatch.advanced(by: selection), data: [UInt8(next)], deviceID: deviceID),
+            SysEx.dt1(ledAddress, data: [UInt8(next + 1)], deviceID: deviceID),
+        ]
     }
 
     /// Simulates a knob turn that crosses Tanto's next write to `address`: the amp applies the turn just before the

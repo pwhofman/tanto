@@ -118,8 +118,9 @@ Steps, silent:
 4. Press Esc: VOLUME goes to 0 in the window and on the amp.
 5. Raise VOLUME to about 20, then switch the booster on and off with its SW switch: each time VOLUME dips to 0 and
    comes back.
-6. Choose GREEN, RED, YELLOW and OFF in the booster's colour menu (the BOOSTER pop-up menu under the knob): the
-   BOOSTER LED on the amp shows the same colour each time.
+6. Turn the booster on (its SW switch, or its knob above OFF), then press BOOSTER COLOR a few times: each press dips
+   VOLUME, and the colour moves on, GREEN, RED, YELLOW, on the amp's LED and in the window alike. Press VARIATION twice:
+   its LED goes on and off again.
 7. Switch the amp off: the toolbar shows "Not connected". Switch it on again: Tanto reconnects.
 
 Steps, audible, only with the user's OK and at a MASTER level the user chooses: repeat steps 4 and 5 while playing.

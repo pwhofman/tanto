@@ -120,3 +120,16 @@ private func connectedModel() async throws -> (EditorModel, SimulatedAmp) {
     model.disconnectWhileQuitting(timeout: .seconds(1))
     #expect(amp.received.last?.message == SysEx.dt1(.editorCommunicationMode, data: [0], deviceID: 0))
 }
+
+@MainActor
+@Test func panelButtonsBelongToTheirSectionsAndArePressedThroughTheGuard() async throws {
+    let (model, _) = try await connectedModel()
+    #expect(model.sections.first { $0.id == "amp" }?.buttons == [.variation])
+    #expect(model.sections.first { $0.id == "booster" }?.buttons == [.booster])
+    let led = try #require(model.led(of: .variation))
+    #expect(try await eventually { model.value(of: led) == 0 })
+    await model.press(.variation)
+    await model.settle()
+    #expect(try await eventually { model.value(of: led) == 1 })
+    #expect(model.buttonRefusals[.variation] == nil)
+}

@@ -28,6 +28,8 @@ public final class EditorModel {
         public let title: String
         /// The parameters Tanto may write, front-panel controls first, then in address order.
         public let parameters: [Parameter]
+        /// The front-panel buttons of the section, which are pressed rather than written.
+        public let buttons: [PanelButton]
     }
 
     // Spec section 6.
@@ -55,6 +57,8 @@ public final class EditorModel {
     public private(set) var refusals: [Int: String] = [:]
     /// The latest refusal of a rename.
     public private(set) var nameRefusal: String?
+    /// The latest refusal of `SafetyGuard` per panel button, as a message for the button.
+    public private(set) var buttonRefusals: [PanelButton: String] = [:]
     /// The ceiling as a percentage of a guarded parameter's travel.
     public private(set) var ceilingPercent = 50
     /// How often Panic was pressed; a slider ignores the rest of a drag that a Panic interrupted.
@@ -78,7 +82,8 @@ public final class EditorModel {
                 id: id, title: title,
                 parameters: parameters.sorted {
                     ($0.block == "Status" ? 0 : 1, $0.offset) < ($1.block == "Status" ? 0 : 1, $1.offset)
-                })
+                },
+                buttons: PanelButton.allCases.filter { $0.section == id })
         }
     }
 
@@ -271,6 +276,30 @@ public final class EditorModel {
             refusals[parameter.offset] = nil
         } catch {
             refusals[parameter.offset] = Self.message(for: error)
+        }
+    }
+
+    /// The LED that shows a panel button's state.
+    ///
+    /// - Parameter button: A panel button.
+    /// - Returns: The LED's parameter in the Status block.
+    public func led(of button: PanelButton) -> Parameter? {
+        map.parameter(block: "Status", prm: button.led)
+    }
+
+    /// Presses a panel button through `SafetyGuard`; a refusal is kept as the button's message.
+    ///
+    /// - Parameter button: A panel button.
+    public func press(_ button: PanelButton) async {
+        guard let safety else {
+            buttonRefusals[button] = "Not connected"
+            return
+        }
+        do {
+            try await safety.press(button)
+            buttonRefusals[button] = nil
+        } catch {
+            buttonRefusals[button] = Self.message(for: error)
         }
     }
 

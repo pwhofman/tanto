@@ -148,8 +148,9 @@ Data flow:
    meanwhile. Messages from the amp never trigger a write, except the correction of 5.8, which only lowers a value
    that Tanto itself wrote.
 2. Every outgoing DT1 is one of: a parameter write that `SafetyGuard` produced from a user action; a whitelisted command
-   (`7F 00 00 01` editor mode, `7F 00 01 00` patch select, `7F 00 01 04` patch write); a librarian write (save, rename,
-   restore) after confirmation.
+   (`7F 00 00 01` editor mode, `7F 00 01 00` patch select, `7F 00 01 04` patch write); a press of the VARIATION or a
+   colour button (`7F 01 01 00` to `05`, 3.5), which `SafetyGuard` soft-switches (5.3); a librarian write (save,
+   rename, restore) after confirmation.
 3. Validation before sending: the address belongs to `ParameterMap`, the value is within range, the encoding and the
    checksum are correct. Anything else is refused and logged. The UI has no way to send raw SysEx.
 4. At most one message per 20 ms. A slider drag sends only its latest value, and after Panic it sends nothing until
@@ -270,6 +271,8 @@ One window:
   - Amp is the front panel: AMP TYPE, VARIATION, GAIN, VOLUME, BASS, MIDDLE, TREBLE, PRESENCE and CAB RESONANCE.
   - Booster, Mod, FX, Delay and Reverb each show their panel knob and colour button, then their on/off switch and type,
     then the detail parameters of the selected type.
+  - The VARIATION and colour buttons are pressed as on the amp (3.5) and show the state the amp reports: OFF or ON, and
+    OFF, GREEN, RED or YELLOW.
   - Sections and the parameters per type follow Tone Studio's UI grouping; its control ids carry a section prefix such
     as `booster-` or `delay2-`. The amp reports the result of every panel change, so the display shows what the amp
     actually did.

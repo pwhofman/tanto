@@ -40,3 +40,32 @@ import Testing
     #expect(await messages.next() == SysEx.dt1(address, data: [42], deviceID: amp.deviceID))
     #expect(amp.memory(at: address, count: 1) == [42])
 }
+
+// A colour-button press moves an effect that is on to its next colour and reports the selection and the LED; an effect
+// that is off stays off. A VARIATION press toggles its LED.
+@Test func panelButtonPressesCycleColoursAndToggleVariation() async throws {
+    let map = try ParameterMap.bundled()
+    let amp = SimulatedAmp(map: map)
+    let led = try #require(map.parameter(block: "Status", prm: "PRM_LED_STATE_BOOST"))
+    let selection = try #require(map.parameter(block: "Patch_2", prm: "PRM_FXBOX_SEL_BOOST"))
+    let variation = try #require(map.parameter(block: "Status", prm: "PRM_LED_STATE_VARI"))
+    let ledAddress = Address.temporaryPatch.advanced(by: led.offset)
+    let selectionAddress = Address.temporaryPatch.advanced(by: selection.offset)
+    let variationAddress = Address.temporaryPatch.advanced(by: variation.offset)
+    amp.setMemory([1], at: ledAddress)
+    amp.setMemory([0], at: selectionAddress)
+    var colours: [UInt8] = []
+    for _ in 0..<3 {
+        try amp.send(SysEx.dt1(PanelButton.booster.address, data: [0], deviceID: amp.deviceID))
+        colours += amp.memory(at: ledAddress, count: 1)
+    }
+    #expect(colours == [2, 3, 1])
+    var reports = amp.incoming.makeAsyncIterator()
+    #expect(await reports.next() == SysEx.dt1(selectionAddress, data: [1], deviceID: amp.deviceID))
+    #expect(await reports.next() == SysEx.dt1(ledAddress, data: [2], deviceID: amp.deviceID))
+    amp.setMemory([0], at: ledAddress)
+    try amp.send(SysEx.dt1(PanelButton.booster.address, data: [0], deviceID: amp.deviceID))
+    #expect(amp.memory(at: ledAddress, count: 1) == [0])
+    try amp.send(SysEx.dt1(PanelButton.variation.address, data: [0], deviceID: amp.deviceID))
+    #expect(amp.memory(at: variationAddress, count: 1) == [1])
+}

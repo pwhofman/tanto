@@ -361,6 +361,22 @@ public actor AmpSession {
         applyLocalWrite(.temporaryPatch, padded)
     }
 
+    /// Presses a front-panel button as Tone Studio does, with a DT1 of `00` to its address. The amp does what its own
+    /// button does and reports what changed.
+    ///
+    /// - Parameters:
+    ///   - button: The button.
+    ///   - priority: The lane to wait in.
+    ///   - basis: What the press was decided on; `nil` to send it whatever happens meanwhile.
+    /// - Returns: `false` if the press was dropped because its basis no longer held.
+    /// - Throws: An error from the transport.
+    @discardableResult
+    func press(_ button: PanelButton, priority: WritePriority = .normal, basis: WriteBasis? = nil) async throws -> Bool
+    {
+        try await sendCommand(
+            SysEx.dt1(button.address, data: [0], deviceID: deviceID), priority: priority, basis: basis)
+    }
+
     /// Panic: the VOLUME knob to 0 as the next message, ahead of everything queued and of a read that waits for its
     /// reply. No write decided before is sent afterwards. While connecting, VOLUME 0 goes out as soon as editor mode is
     /// on (design spec, section 5.5).

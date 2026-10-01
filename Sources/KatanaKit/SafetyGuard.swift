@@ -82,6 +82,8 @@ public actor SafetyGuard {
         let basis: WriteBasis
         // For an effect knob switched on: the value to ramp to once the knob is at 0.
         var then: Int?
+        // A front-panel button to press instead of writing `value`; `parameter` is then the button's LED.
+        var press: PanelButton?
     }
 
     // The last value Tanto wrote to a parameter that the amp may still hold.
@@ -136,6 +138,9 @@ public actor SafetyGuard {
         else {
             throw SafetyError.invalidTable("no guarded VOLUME knob")
         }
+        if let button = PanelButton.allCases.first(where: { map.parameter(block: "Status", prm: $0.led) == nil }) {
+            throw SafetyError.invalidTable("no \(button.led)")
+        }
         if let flat = map.table.parameters.first(where: { $0.louder != nil && $0.maximum <= $0.minimum }) {
             throw SafetyError.invalidTable("\(flat.prm) has no range")
         }
@@ -184,14 +189,8 @@ public actor SafetyGuard {
         else {
             throw SafetyError.outOfRange(known.prm, value)
         }
-        guard !stopped else { throw SafetyError.notReady }
-        let panicsBefore = panics
-        let snapshot = await session.guardSnapshot(of: [known, volumeKnob])
-        // From here on nothing suspends: the decision rests on this snapshot and the guard's own state alone.
-        guard panics == panicsBefore else { throw SafetyError.overtakenByPanic }
-        guard !stopped else { throw SafetyError.notReady }
-        sync(with: snapshot)
-        guard snapshot.isValid, let view = snapshot.views[known.offset], let quietest = quietestPossible(known, view),
+        let snapshot = try await requestSnapshot(of: [known])
+        guard let view = snapshot.views[known.offset], let quietest = quietestPossible(known, view),
             let loudest = loudestPossible(known, view)
         else {
             throw SafetyError.notReady
@@ -213,6 +212,21 @@ public actor SafetyGuard {
                 targets[known.offset] = value
             }
         }
+        startPump()
+    }
+
+    /// Presses a front-panel button with the soft switch of section 5.3 of the design spec: VOLUME dips to 0, the press
+    /// goes out, and VOLUME comes back. The amp then reports what changed, e.g. the next colour.
+    ///
+    /// - Parameter button: The button.
+    /// - Throws: `SafetyError` if the press is refused.
+    public func press(_ button: PanelButton) async throws {
+        guard let led = map.parameter(block: "Status", prm: button.led) else {
+            throw SafetyError.invalidTable("no \(button.led)")
+        }
+        let snapshot = try await requestSnapshot(of: [led])
+        guard let current = snapshot.views[led.offset]?.value else { throw SafetyError.notReady }
+        try softSwitch(led, to: current, snapshot, press: button)
         startPump()
     }
 
@@ -276,8 +290,22 @@ public actor SafetyGuard {
         await withCheckedContinuation { idleWaiters.append($0) }
     }
 
+    // One look at the session for a request. Nothing after it suspends, so the decision rests on this snapshot and the
+    // guard's own state alone.
+    private func requestSnapshot(of parameters: [Parameter]) async throws -> AmpSession.GuardSnapshot {
+        guard !stopped else { throw SafetyError.notReady }
+        let panicsBefore = panics
+        let snapshot = await session.guardSnapshot(of: parameters + [volumeKnob])
+        guard panics == panicsBefore else { throw SafetyError.overtakenByPanic }
+        guard !stopped else { throw SafetyError.notReady }
+        sync(with: snapshot)
+        guard snapshot.isValid else { throw SafetyError.notReady }
+        return snapshot
+    }
+
     private func softSwitch(
-        _ parameter: Parameter, to value: Int, _ snapshot: AmpSession.GuardSnapshot, then: Int? = nil
+        _ parameter: Parameter, to value: Int, _ snapshot: AmpSession.GuardSnapshot, then: Int? = nil,
+        press: PanelButton? = nil
     ) throws {
         guard let current = snapshot.views[parameter.offset]?.value, let volumeView = snapshot.views[volumeKnob.offset],
             let lowestVolume = quietestPossible(volumeKnob, volumeView),
@@ -285,7 +313,7 @@ public actor SafetyGuard {
         else {
             throw SafetyError.notReady
         }
-        guard value != current || then != nil else { return }
+        guard value != current || then != nil || press != nil else { return }
         let restore = volumeRestore ?? targets[volumeKnob.offset] ?? lowestVolume
         let ceiling = ceiling(of: volumeKnob) ?? volumeKnob.maximum
         guard highestVolume <= ceiling, restore <= ceiling else {
@@ -300,7 +328,7 @@ public actor SafetyGuard {
         switches.append(
             Write(
                 parameter: parameter, value: value, priority: .normal, basis: snapshot.basis([volumeKnob, parameter]),
-                then: then))
+                then: then, press: press))
     }
 
     private func startPump() {
@@ -344,6 +372,17 @@ public actor SafetyGuard {
 
     private func send(_ write: Write) async {
         statistics["writes", default: 0] += 1
+        if let button = write.press {
+            do {
+                if try await !session.press(button, priority: write.priority, basis: write.basis) {
+                    statistics["dropped", default: 0] += 1
+                    logger.notice("press of \(button.label, privacy: .public) dropped: the amp changed first")
+                }
+            } catch {
+                logger.error("press of \(button.label, privacy: .public) failed: \(error)")
+            }
+            return
+        }
         let offset = write.parameter.offset
         inFlight[offset] = write.value
         defer { inFlight[offset] = nil }
