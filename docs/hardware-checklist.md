@@ -88,13 +88,16 @@ Afterwards, switch to another channel and back.
 
 ### Results
 
+Silent steps on 2026-10-01: Katana-100 MkII, POWER CONTROL at 0.5 W, MASTER at minimum. The live channel started with
+VOLUME 88, above the ceiling.
+
 | Item | Result |
 |---|---|
-| Rename and restore | |
-| Lower: VOLUME knob and amp volume after | |
-| Panic: VOLUME knob and amp volume after | |
-| Ramp: steps and spacing in the log | |
-| No `amp` lines in steps 1–4 (the amp does not echo Tanto's writes) | |
+| Rename and restore | `TANTO TEST` read back from the amp, then the original name `Acoustic` restored. |
+| Lower: VOLUME knob and amp volume after | 88 → 78; the amp volume followed to 78. |
+| Panic: VOLUME knob and amp volume after | 78 → 0; the amp volume followed to 0. |
+| Ramp: steps and spacing in the log | 0 → 10 in ten steps of 1, 21.8–32.7 ms apart; no message closer than 20.5 ms to the one before. |
+| No `amp` lines in steps 1–4 (the amp does not echo Tanto's writes) | The amp does not echo writes to `60 00 06 52`. After each one it reports the amp volume it derives from it, `60 00 00 28` (`PRM_PREAMP_A_LEVEL`), which Tanto does not write, so the guard does not take it for a knob turn and ramps go on. |
 | Audible ramp | |
 | Audible Panic | |
 | Colour LED order (OFF, GREEN, RED, YELLOW) matches the amp | |
