@@ -17,13 +17,12 @@ swift build -c release --product Tanto
 bin=$(swift build -c release --product Tanto --show-bin-path)
 
 app=build/Tanto.app
-rm -rf "$app" build/Tanto.iconset
+rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$bin/Tanto" "$app/Contents/MacOS/Tanto"
 # SwiftPM's resource bundle is not found inside a hand-made app, so the app loads its own copy of the table.
 cp Sources/KatanaKit/Resources/parameters.json "$app/Contents/Resources/"
-swift scripts/make-icon.swift build/Tanto.iconset
-iconutil -c icns build/Tanto.iconset -o "$app/Contents/Resources/Tanto.icns"
+cp Icon/AppIcon.icns "$app/Contents/Resources/AppIcon.icns"
 cat > "$app/Contents/Info.plist" << 'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -32,7 +31,7 @@ cat > "$app/Contents/Info.plist" << 'PLIST'
     <key>CFBundleExecutable</key>
     <string>Tanto</string>
     <key>CFBundleIconFile</key>
-    <string>Tanto</string>
+    <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
     <string>io.github.pwhofman.tanto</string>
     <key>CFBundleInfoDictionaryVersion</key>
