@@ -13,8 +13,11 @@ Plans: `docs/superpowers/plans/`. Hardware checks: `docs/hardware-checklist.md`.
 ## Commands
 
 - Build and test: `swift build`, `swift test`.
-- Format: `swift format --in-place --recursive Sources Tests Package.swift`; check with
-  `swift format lint --recursive Sources Tests Package.swift`.
+- Format: `swift format --in-place --recursive Sources Tests Package.swift scripts`; check with
+  `swift format lint --recursive Sources Tests Package.swift scripts`.
+- App: `scripts/build-app.sh` builds `build/Tanto.app`; `--install` copies it to `/Applications`. For development,
+  `open build/Tanto.app --args -simulated YES` runs it against `SimulatedAmp`, and `-snapshot FILE` added to that saves
+  the window as a PNG and quits. Keep the file outside `~/Documents`, which would ask the user for access.
 - Probe: `swift run TantoProbe` lists MIDI endpoints and sends nothing; `--connect` talks to the amp (hardware check 1).
 - Parameter table: `uv run --directory tools python gen_parameter_map.py` regenerates
   `Sources/KatanaKit/Resources/parameters.json` from the installed Tone Studio. Checks: `uv run --directory tools pytest`,
