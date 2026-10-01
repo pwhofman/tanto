@@ -29,8 +29,6 @@ public final class EditorModel {
         public let title: String
         /// The parameters Tanto may write, front-panel controls first, then in address order.
         public let parameters: [Parameter]
-        /// The front-panel buttons of the section, which are pressed rather than written.
-        public let buttons: [PanelButton]
     }
 
     // Spec section 6.
@@ -107,8 +105,7 @@ public final class EditorModel {
                 id: id, title: title,
                 parameters: parameters.sorted {
                     ($0.block == "Status" ? 0 : 1, $0.offset) < ($1.block == "Status" ? 0 : 1, $1.offset)
-                },
-                buttons: PanelButton.allCases.filter { $0.section == id })
+                })
         }
     }
 

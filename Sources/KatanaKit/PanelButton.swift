@@ -29,11 +29,6 @@ public enum PanelButton: Int, CaseIterable, Sendable {
         ][rawValue]
     }
 
-    /// The editor section of the button, as in the parameter table.
-    public var section: String {
-        ["amp", "booster", "mod", "fx", "delay", "reverb"][rawValue]
-    }
-
     /// The button's name on the amp.
     public var label: String {
         ["VARIATION", "BOOSTER COLOR", "MOD COLOR", "FX COLOR", "DELAY COLOR", "REVERB COLOR"][rawValue]

@@ -17,7 +17,8 @@ the result in hardware check 3 of plan 3.
 - The arrangement follows Tone Studio: where the knobs live, the front panel, the pages.
 - The look is Apple's: the system's window background and sidebar material, grouped containers, SF Symbols, light and
   dark mode.
-- On/off is a macOS switch. What Tone Studio shows as a knob or dial is a macOS knob (`NSSlider` in its circular style).
+- On/off is a macOS switch. What Tone Studio shows as a knob or dial is a knob drawn the way Apple's music apps draw
+  theirs; the user chose it over AppKit's circular slider, which turns all the way round.
 - The colour buttons stay as they are.
 
 ## What Tone Studio shows
@@ -31,7 +32,7 @@ From its interface in demo mode and from `export/layout.div`:
   - EFFECTS: BOOSTER, MOD, FX, DELAY and REVERB, each a knob with its colour button above it;
   - CAB RESONANCE (a menu), PRESENCE;
   - SOLO, a switch and its level;
-  - CONTOUR, a switch and its type.
+  - CONTOUR, one knob for OFF and contours 1–3 that sets two parameters, CONTOUR SW and CONTOUR SELECT.
 - **Pages** below the panel, chosen with tabs: EFFECTS and CHAIN; BOOSTER, MOD, FX, DELAY, DELAY2, REVERB, SOLO,
   CONTOUR; PEDAL FX, EQ, EQ2, NS, SEND/RETURN, ASSIGN.
 - **A page** has a header with the block's on/off button and its type menus, then dials (64 × 64 px) at fixed positions,
@@ -61,9 +62,8 @@ From its interface in demo mode and from `export/layout.div`:
 
 ### 2. Native controls
 
-- A knob: `NSSlider` in its circular style, through `NSViewRepresentable`, with the label and the value below it. A
-  guarded knob stops at its ceiling and says "max 50" in its caption. As with today's sliders, a drag that Panic
-  interrupted sends nothing more.
+- A knob in SwiftUI with the label and the value below it. A guarded knob stops at its ceiling and says "max 50" in
+  its caption. As with today's sliders, a drag that Panic interrupted sends nothing more.
 - A stepped knob with tick marks for AMP TYPE.
 - A vertical slider for the graphic EQ bands.
 - Switches, pop-up menus and segmented controls as SwiftUI provides them.

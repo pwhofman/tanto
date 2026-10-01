@@ -26,7 +26,40 @@ struct ControlView: View {
                 Text(refusal).font(.caption2).foregroundStyle(.red).multilineTextAlignment(.center)
             }
         }
-        .frame(minWidth: 84)
+        .frame(minWidth: 60)
+    }
+}
+
+/// Tone Studio's CONTOUR knob: OFF, or contour 1, 2 or 3. Like Tone Studio, it switches CONTOUR on or off if that
+/// changes, then selects the contour.
+struct ContourKnob: View {
+    let model: EditorModel
+    let onOff: Parameter
+    let select: Parameter
+
+    var body: some View {
+        let on = (model.value(of: onOff) ?? onOff.minimum) != onOff.minimum
+        let contours = select.maximum - select.minimum + 1
+        VStack(spacing: 3) {
+            KnobView(
+                model: model, value: on ? (model.value(of: select) ?? select.minimum) - select.minimum + 1 : 0,
+                range: 0...contours, ceiling: nil, positions: contours + 1, label: "CONTOUR", vertical: false,
+                text: { $0 == 0 ? "OFF" : "\($0)" }, set: choose)
+            if let refusal = model.refusals[onOff.offset] ?? model.refusals[select.offset] {
+                Text(refusal).font(.caption2).foregroundStyle(.red).multilineTextAlignment(.center)
+            }
+        }
+        .frame(minWidth: 60)
+    }
+
+    private func choose(_ contour: Int) async {
+        let on = (model.value(of: onOff) ?? onOff.minimum) != onOff.minimum
+        if (contour > 0) != on {
+            await model.set(onOff, to: contour > 0 ? onOff.maximum : onOff.minimum)
+        }
+        if contour > 0 {
+            await model.set(select, to: select.minimum + contour - 1)
+        }
     }
 }
 
@@ -35,22 +68,26 @@ struct ControlView: View {
 /// nothing more. A knob with positions, such as AMP TYPE, sends its choice when the drag ends.
 private struct KnobView: View {
     let model: EditorModel
-    let parameter: Parameter
+    let value: Int
+    let range: ClosedRange<Int>
+    let ceiling: Int?
+    /// The number of positions of a knob that selects, such as AMP TYPE; `nil` for an amount.
+    let positions: Int?
+    let label: String
     let vertical: Bool
+    let text: (Int) -> String
+    let set: (Int) async -> Void
     @State private var dragged: Int?
     @State private var dragPanics: Int?
 
     var body: some View {
-        let value = model.value(of: parameter) ?? parameter.minimum
-        let ceiling = model.ceiling(of: parameter)
-        let stop = ceiling.map { max($0, value) } ?? parameter.maximum
+        let stop = ceiling.map { max($0, value) } ?? range.upperBound
         let interrupted = dragPanics.map { $0 != model.panicCount } ?? false
         let shown = interrupted ? value : dragged ?? value
-        let positions = parameter.kind == .numeric ? nil : parameter.maximum - parameter.minimum + 1
         let onChange = { (new: Int) in
             dragged = new
             if positions == nil, !interrupted {
-                Task { await model.set(parameter, to: new) }
+                Task { await set(new) }
             }
         }
         let onTracking = { (tracking: Bool) in
@@ -58,7 +95,7 @@ private struct KnobView: View {
                 dragPanics = model.panicCount
             } else {
                 if positions != nil, let dragged, !interrupted, dragged != value {
-                    Task { await model.set(parameter, to: dragged) }
+                    Task { await set(dragged) }
                 }
                 dragged = nil
                 dragPanics = nil
@@ -66,25 +103,33 @@ private struct KnobView: View {
         }
         VStack(spacing: 2) {
             if vertical {
-                VerticalSlider(
-                    value: shown, range: parameter.minimum...parameter.maximum, stop: stop, onChange: onChange,
-                    onTracking: onTracking
-                )
-                .frame(width: 24, height: 120)
+                VerticalSlider(value: shown, range: range, stop: stop, onChange: onChange, onTracking: onTracking)
+                    .frame(width: 24, height: 120)
             } else {
                 Dial(
-                    value: shown, range: parameter.minimum...parameter.maximum, stop: stop, ceiling: ceiling,
-                    positions: positions, label: parameter.label, valueText: parameter.displayText(for: shown),
-                    onChange: onChange, onTracking: onTracking)
+                    value: shown, range: range, stop: stop, ceiling: ceiling, positions: positions, label: label,
+                    valueText: text(shown), onChange: onChange, onTracking: onTracking)
             }
-            Text(parameter.displayText(for: shown))
+            Text(text(shown))
                 .font(.callout).monospacedDigit()
                 .foregroundStyle(ceiling.map { shown > $0 } == true ? .orange : .primary)
-            Text(parameter.label).font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            Text(label).font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
             if let ceiling {
-                Text("max \(parameter.displayText(for: ceiling))").font(.caption2).foregroundStyle(.tertiary)
+                Text("max \(text(ceiling))").font(.caption2).foregroundStyle(.tertiary)
             }
         }
+    }
+}
+
+extension KnobView {
+    /// A knob or slider for `parameter`.
+    init(model: EditorModel, parameter: Parameter, vertical: Bool) {
+        self.init(
+            model: model, value: model.value(of: parameter) ?? parameter.minimum,
+            range: parameter.minimum...parameter.maximum, ceiling: model.ceiling(of: parameter),
+            positions: parameter.kind == .numeric ? nil : parameter.maximum - parameter.minimum + 1,
+            label: parameter.label, vertical: vertical, text: parameter.displayText(for:),
+            set: { await model.set(parameter, to: $0) })
     }
 }
 

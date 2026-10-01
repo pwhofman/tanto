@@ -123,10 +123,8 @@ private func connectedModel() async throws -> (EditorModel, SimulatedAmp) {
 }
 
 @MainActor
-@Test func panelButtonsBelongToTheirSectionsAndArePressedThroughTheGuard() async throws {
+@Test func panelButtonsArePressedThroughTheGuard() async throws {
     let (model, _) = try await connectedModel()
-    #expect(model.sections.first { $0.id == "amp" }?.buttons == [.variation])
-    #expect(model.sections.first { $0.id == "booster" }?.buttons == [.booster])
     let led = try #require(model.led(of: .variation))
     #expect(try await eventually { model.value(of: led) == 0 })
     await model.press(.variation)
