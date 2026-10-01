@@ -1,0 +1,11 @@
+// swift-tools-version: 6.2
+import PackageDescription
+
+let package = Package(
+    name: "Tanto",
+    platforms: [.macOS("27.0")],
+    targets: [
+        .target(name: "KatanaKit", resources: [.copy("Resources/parameters.json")]),
+        .testTarget(name: "KatanaKitTests", dependencies: ["KatanaKit"]),
+    ]
+)
