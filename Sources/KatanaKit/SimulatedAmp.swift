@@ -4,7 +4,7 @@ import Synchronization
 /// An in-memory Katana MkII for tests and for development while the amp is off.
 ///
 /// It answers identity requests and RQ1 reads from its memory, stores DT1 writes, and records every message it
-/// receives with its arrival time.
+/// receives with its arrival time. Like the real amp, it ignores RQ1 and DT1 messages for another device ID.
 public final class SimulatedAmp: MIDITransport {
     /// A message the simulated amp received.
     public struct Received: Sendable {
@@ -14,11 +14,13 @@ public final class SimulatedAmp: MIDITransport {
         public let time: ContinuousClock.Instant
     }
 
-    /// The default reply to an identity request; passes Tone Studio's Katana MkII check.
+    /// The identity reply of the user's Katana-100 MkII, recorded in hardware check 1: device ID 00, model code 06.
     public static let katanaIdentityReply: [UInt8] = [
-        0xF0, 0x7E, 0x10, 0x06, 0x02, 0x41, 0x33, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xF7,
+        0xF0, 0x7E, 0x00, 0x06, 0x02, 0x41, 0x33, 0x03, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0xF7,
     ]
 
+    /// The device ID the simulated amp answers to: byte 2 of its identity reply.
+    public let deviceID: UInt8
     public let incoming: AsyncStream<[UInt8]>
     private let continuation: AsyncStream<[UInt8]>.Continuation
     private let state: Mutex<State>
@@ -37,8 +39,9 @@ public final class SimulatedAmp: MIDITransport {
     ///
     /// - Parameters:
     ///   - map: Layout used to fill the patches.
-    ///   - identityReply: Reply to identity requests.
+    ///   - identityReply: Reply to identity requests; byte 2 sets the device ID.
     public init(map: ParameterMap, identityReply: [UInt8] = SimulatedAmp.katanaIdentityReply) {
+        deviceID = identityReply[2]
         (incoming, continuation) = AsyncStream.makeStream(of: [UInt8].self)
         var memory: [Int: UInt8] = [:]
         let patches =
@@ -73,12 +76,14 @@ public final class SimulatedAmp: MIDITransport {
             if message == SysEx.identityRequest {
                 return state.identityReply
             }
-            if let (address, size) = Self.parseRQ1(message) {
+            if let (address, size) = Self.parseRQ1(message, deviceID: deviceID) {
                 guard state.answersReads else { return nil }
                 let data = (0..<size).map { state.memory[address.linear + $0] ?? 0 }
-                return SysEx.dt1(address, data: data)
+                return SysEx.dt1(address, data: data, deviceID: deviceID)
             }
-            if case .dataSet(let address, let data) = IncomingMessage(message) {
+            if message.count > 2, message[2] == deviceID,
+                case .dataSet(let address, let data) = IncomingMessage(message)
+            {
                 for (index, byte) in data.enumerated() {
                     state.memory[address.linear + index] = byte
                 }
@@ -116,7 +121,7 @@ public final class SimulatedAmp: MIDITransport {
                 state.memory[address.linear + index] = byte
             }
         }
-        continuation.yield(SysEx.dt1(address, data: bytes))
+        continuation.yield(SysEx.dt1(address, data: bytes, deviceID: deviceID))
     }
 
     /// Stops or resumes answering RQ1 reads, to test timeouts.
@@ -126,8 +131,8 @@ public final class SimulatedAmp: MIDITransport {
         state.withLock { $0.answersReads = answers }
     }
 
-    static func parseRQ1(_ message: [UInt8]) -> (Address, Int)? {
-        let prefix = SysEx.header + [SysEx.rq1Command]
+    static func parseRQ1(_ message: [UInt8], deviceID: UInt8) -> (Address, Int)? {
+        let prefix = SysEx.header(deviceID) + [SysEx.rq1Command]
         guard message.count == prefix.count + 10, message.starts(with: prefix), message.last == 0xF7 else {
             return nil
         }

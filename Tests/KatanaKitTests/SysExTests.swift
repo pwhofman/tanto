@@ -2,6 +2,11 @@ import Testing
 
 @testable import KatanaKit
 
+// The reply of the user's Katana-100 MkII, recorded in hardware check 1: device ID 00, model code 06.
+private let realIdentityReply: [UInt8] = [
+    0xF0, 0x7E, 0x00, 0x06, 0x02, 0x41, 0x33, 0x03, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0xF7,
+]
+
 @Test func editorModeMessagesMatchKnownBytes() {
     #expect(
         SysEx.dt1(.editorCommunicationMode, data: [1]) == [
@@ -20,9 +25,15 @@ import Testing
         ])
 }
 
-@Test func parsesDataSet() {
-    let message = SysEx.dt1(Address(packed: 0x6000_0028), data: [42])
-    #expect(IncomingMessage(message) == .dataSet(Address(packed: 0x6000_0028), [42]))
+@Test func messagesCarryTheGivenDeviceID() {
+    #expect(SysEx.rq1(.temporaryPatch, size: 16, deviceID: 0x00)[2] == 0x00)
+    #expect(SysEx.dt1(.editorCommunicationMode, data: [1], deviceID: 0x00)[2] == 0x00)
+}
+
+@Test func parsesDataSetFromAnyDeviceID() {
+    let address = Address(packed: 0x6000_0028)
+    #expect(IncomingMessage(SysEx.dt1(address, data: [42])) == .dataSet(address, [42]))
+    #expect(IncomingMessage(SysEx.dt1(address, data: [42], deviceID: 0x00)) == .dataSet(address, [42]))
 }
 
 @Test func wrongChecksumIsMalformed() {
@@ -32,12 +43,14 @@ import Testing
 }
 
 @Test func recognizesTheKatanaIdentityReply() {
-    let reply: [UInt8] = [0xF0, 0x7E, 0x10, 0x06, 0x02, 0x41, 0x33, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xF7]
-    #expect(IncomingMessage(reply) == .identityReply(reply))
-    #expect(SysEx.isKatanaIdentityReply(reply))
-    var other = reply
-    other[6] = 0x34
-    #expect(!SysEx.isKatanaIdentityReply(other))
+    #expect(IncomingMessage(realIdentityReply) == .identityReply(realIdentityReply))
+    #expect(SysEx.isKatanaIdentityReply(realIdentityReply))
+    var otherFamily = realIdentityReply
+    otherFamily[6] = 0x34
+    #expect(!SysEx.isKatanaIdentityReply(otherFamily))
+    var otherModel = realIdentityReply
+    otherModel[10] = 0x01  // not a Katana MkII model code (05–0B)
+    #expect(!SysEx.isKatanaIdentityReply(otherModel))
 }
 
 @Test func otherMessagesAreOther() {

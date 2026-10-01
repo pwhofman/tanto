@@ -93,6 +93,7 @@ func run(_ options: Options) async throws {
     let session = AmpSession(transport: transport)
     let info = try await session.connect()
     print("identity reply:    \(hex(info.identityReply))")
+    print("device ID \(hex([info.deviceID])), model code \(hex([info.modelCode])) (06 is the Katana-100 MkII)")
     print("editor level \(info.communicationLevel), revision \(info.communicationRevision); editor mode is on")
     do {
         let current = ValueEncoding.int2x7.decode(try await session.read(.currentPatchNumber, size: 2))

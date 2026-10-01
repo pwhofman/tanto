@@ -18,6 +18,11 @@ public struct ConnectionInfo: Equatable, Sendable {
     public let communicationLevel: UInt8
     /// Editor communication revision.
     public let communicationRevision: UInt8
+
+    /// The amp's device ID: byte 2 of the identity reply.
+    public var deviceID: UInt8 { identityReply[2] }
+    /// The model code: byte 10 of the identity reply; `06` is the Katana-100 MkII.
+    public var modelCode: UInt8 { identityReply[10] }
 }
 
 /// A DT1 from the amp that is not a reply to a read, i.e. a change made on the amp itself.
@@ -64,6 +69,7 @@ public actor AmpSession {
     private let timing: SessionTiming
     private let clock = ContinuousClock()
     private let logger = Logger(subsystem: "io.github.pwhofman.tanto", category: "midi")
+    private var deviceID = SysEx.defaultDeviceID
     private var lastSend: ContinuousClock.Instant?
     private var busy = false
     private var waiters: [CheckedContinuation<Void, Never>] = []
@@ -102,6 +108,7 @@ public actor AmpSession {
     }
 
     /// Runs Tone Studio's connect sequence: identity request, editor communication level, editor mode on, revision.
+    /// Like Tone Studio, all later messages use the device ID from the identity reply.
     ///
     /// - Returns: What the amp reported.
     /// - Throws: `AmpError` if the amp does not answer or is not a Katana MkII.
@@ -109,8 +116,9 @@ public actor AmpSession {
         startListening()
         let identity = try await request(SysEx.identityRequest, expecting: .identityReply)
         guard SysEx.isKatanaIdentityReply(identity) else { throw AmpError.notAKatana(identity) }
+        deviceID = identity[2]
         let level = try await read(.editorCommunicationLevel, size: 1)[0]
-        try await sendCommand(SysEx.dt1(.editorCommunicationMode, data: [1]))
+        try await sendCommand(SysEx.dt1(.editorCommunicationMode, data: [1], deviceID: deviceID))
         let revision = try await read(.editorCommunicationRevision, size: 1)[0]
         return ConnectionInfo(identityReply: identity, communicationLevel: level, communicationRevision: revision)
     }
@@ -119,7 +127,7 @@ public actor AmpSession {
     ///
     /// - Throws: An error from the transport.
     public func disconnect() async throws {
-        try await sendCommand(SysEx.dt1(.editorCommunicationMode, data: [0]))
+        try await sendCommand(SysEx.dt1(.editorCommunicationMode, data: [0], deviceID: deviceID))
     }
 
     /// Reads `size` bytes starting at `address`, in requests of at most `maxReadSize` bytes.
@@ -136,7 +144,8 @@ public actor AmpSession {
         while data.count < size {
             let start = address.advanced(by: data.count)
             let count = min(Self.maxReadSize, size - data.count)
-            data += try await request(SysEx.rq1(start, size: count), expecting: .data(start, count))
+            data += try await request(
+                SysEx.rq1(start, size: count, deviceID: deviceID), expecting: .data(start, count))
         }
         return data
     }

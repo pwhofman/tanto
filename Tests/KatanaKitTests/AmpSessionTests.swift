@@ -4,18 +4,20 @@ import Testing
 
 private let quickTimeout = SessionTiming(spacing: .milliseconds(20), readTimeout: .milliseconds(100))
 
-@Test func connectSendsToneStudiosSequence() async throws {
+@Test func connectSendsToneStudiosSequenceToTheAmpsDeviceID() async throws {
     let amp = SimulatedAmp(map: try .bundled())
     let info = try await AmpSession(transport: amp).connect()
     #expect(info.identityReply == SimulatedAmp.katanaIdentityReply)
+    #expect(info.deviceID == 0x00)
+    #expect(info.modelCode == 0x06)
     #expect(info.communicationLevel == 8)
     #expect(info.communicationRevision == 1)
     #expect(
         amp.received.map(\.message) == [
             SysEx.identityRequest,
-            SysEx.rq1(.editorCommunicationLevel, size: 1),
-            SysEx.dt1(.editorCommunicationMode, data: [1]),
-            SysEx.rq1(.editorCommunicationRevision, size: 1),
+            SysEx.rq1(.editorCommunicationLevel, size: 1, deviceID: 0x00),
+            SysEx.dt1(.editorCommunicationMode, data: [1], deviceID: 0x00),
+            SysEx.rq1(.editorCommunicationRevision, size: 1, deviceID: 0x00),
         ])
 }
 
@@ -31,14 +33,16 @@ private let quickTimeout = SessionTiming(spacing: .milliseconds(20), readTimeout
 
 @Test func readsAreSplitIntoRequestsOf128Bytes() async throws {
     let amp = SimulatedAmp(map: try .bundled())
+    let session = AmpSession(transport: amp)
+    _ = try await session.connect()
     let start = Address.temporaryPatch.advanced(by: 128)
-    let data = try await AmpSession(transport: amp).read(start, size: 300)
+    let data = try await session.read(start, size: 300)
     #expect(data == amp.memory(at: start, count: 300))
     #expect(
-        amp.received.map(\.message) == [
-            SysEx.rq1(start, size: 128),
-            SysEx.rq1(start.advanced(by: 128), size: 128),
-            SysEx.rq1(start.advanced(by: 256), size: 44),
+        amp.received.dropFirst(4).map(\.message) == [
+            SysEx.rq1(start, size: 128, deviceID: 0x00),
+            SysEx.rq1(start.advanced(by: 128), size: 128, deviceID: 0x00),
+            SysEx.rq1(start.advanced(by: 256), size: 44, deviceID: 0x00),
         ])
 }
 
@@ -56,12 +60,15 @@ private let quickTimeout = SessionTiming(spacing: .milliseconds(20), readTimeout
 
 @Test func readsGiveUpAfterOneRetry() async throws {
     let amp = SimulatedAmp(map: try .bundled())
-    amp.setAnswersReads(false)
     let session = AmpSession(transport: amp, timing: quickTimeout)
+    _ = try await session.connect()
+    amp.setAnswersReads(false)
     await #expect(throws: AmpError.timeout(.temporaryPatch)) {
         try await session.read(.temporaryPatch, size: 16)
     }
-    #expect(amp.received.map(\.message) == Array(repeating: SysEx.rq1(.temporaryPatch, size: 16), count: 2))
+    #expect(
+        amp.received.dropFirst(4).map(\.message)
+            == Array(repeating: SysEx.rq1(.temporaryPatch, size: 16, deviceID: 0x00), count: 2))
 }
 
 @Test func changesMadeOnTheAmpAreReported() async throws {
@@ -92,6 +99,9 @@ private let quickTimeout = SessionTiming(spacing: .milliseconds(20), readTimeout
         if case .dataSet = IncomingMessage(received.message) { received.message } else { nil }
     }
     #expect(
-        writes == [SysEx.dt1(.editorCommunicationMode, data: [1]), SysEx.dt1(.editorCommunicationMode, data: [0])])
-    #expect(amp.received.last?.message == SysEx.dt1(.editorCommunicationMode, data: [0]))
+        writes == [
+            SysEx.dt1(.editorCommunicationMode, data: [1], deviceID: 0x00),
+            SysEx.dt1(.editorCommunicationMode, data: [0], deviceID: 0x00),
+        ])
+    #expect(amp.received.last?.message == SysEx.dt1(.editorCommunicationMode, data: [0], deviceID: 0x00))
 }
