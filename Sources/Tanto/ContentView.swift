@@ -188,9 +188,10 @@ private struct EditorView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 16) {
                 HStack {
-                    Text("Name").frame(width: 170, alignment: .leading)
-                    TextField("Name", text: $name)
-                        .frame(maxWidth: 220)
+                    TextField("Name", text: $name, prompt: Text("Patch name"))
+                        .font(.title3)
+                        .frame(maxWidth: 240)
+                        .help("The live sound's name; Return renames it")
                         .onSubmit { Task { await model.rename(to: name) } }
                     if let refusal = model.nameRefusal {
                         Text(refusal).font(.caption).foregroundStyle(.red)

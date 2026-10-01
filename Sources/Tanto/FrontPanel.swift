@@ -55,7 +55,7 @@ struct FrontPanel: View {
                     // Tone Studio gives the last group no title; the empty line keeps its knobs level with the others.
                     Text(group.title.isEmpty ? " " : group.title.uppercased())
                         .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                    Grid(alignment: .top, horizontalSpacing: 4, verticalSpacing: 6) {
+                    Grid(alignment: .top, horizontalSpacing: 8, verticalSpacing: 6) {
                         GridRow {
                             ForEach(Array(group.columns.enumerated()), id: \.offset) { _, column in
                                 if let upper = column.upper {

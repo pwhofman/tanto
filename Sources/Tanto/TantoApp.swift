@@ -23,6 +23,8 @@ struct TantoApp: App {
                     await start()
                 }
         }
+        // Wide enough for the front panel in one row; the window keeps the size it was last given.
+        .defaultSize(width: 1400, height: 900)
         .commands {
             LibraryCommands(model: model)
         }

@@ -212,7 +212,16 @@ private struct PageView: View {
                     ContourKnob(model: model).fixedSize()
                 }
                 ForEach(header, id: \.parameter.offset) { item in
-                    ControlView(model: model, parameter: item.parameter).fixedSize()
+                    // The switch in Tone Studio's title bar turns the page's block on and off; its title stands beside it.
+                    if item.y < 0, item.parameter.control == .switch {
+                        HStack(spacing: 8) {
+                            ControlView(model: model, parameter: item.parameter, showsLabel: false)
+                            Text(page.title).font(.headline)
+                        }
+                        .fixedSize()
+                    } else {
+                        ControlView(model: model, parameter: item.parameter).fixedSize()
+                    }
                 }
             }
             ForEach(rows.indices, id: \.self) { index in

@@ -271,23 +271,34 @@ apply:
 
 ## 6. UI (v1)
 
-One window:
+One window in the system's light or dark appearance, with the system's window background and sidebar. It is arranged
+as BOSS TONE STUDIO arranges its editor and built from macOS's own controls.
 
-- Toolbar: connection status, current channel, Panic.
+- Toolbar: connection status, current channel, Panic (red, Esc).
 - Sidebar: PANEL, A1–A4 and B1–B4 with their names; the current channel is highlighted; clicking a channel switches to
   it (5.4). Context menu: "Save Live Sound Here…", "Rename…". Backup and Restore are in the File menu.
-- Editor: the patch name, then the sections Amp, Booster, Mod, FX, Delay, Delay 2, Reverb, EQ 1, EQ 2, Pedal FX, Noise
-  Suppressor, Send/Return, Solo, Contour, Chain.
-  - Amp is the front panel: AMP TYPE, VARIATION, GAIN, VOLUME, BASS, MIDDLE, TREBLE, PRESENCE and CAB RESONANCE.
-  - Booster, Mod, FX, Delay and Reverb each show their panel knob and colour button, then their on/off switch and type,
-    then the detail parameters of the selected type.
-  - The VARIATION and colour buttons are pressed as on the amp (3.5) and show the state the amp reports: OFF or ON, and
-    OFF, GREEN, RED or YELLOW.
-  - Sections and the parameters per type follow Tone Studio's UI grouping; its control ids carry a section prefix such
-    as `booster-` or `delay2-`. The amp reports the result of every panel change, so the display shows what the amp
+- Editor:
+  - The patch name.
+  - The front panel, always shown: AMPLIFIER (VARIATION, AMP TYPE, GAIN, VOLUME), EQUALIZER (BASS, MIDDLE, TREBLE),
+    EFFECTS (the BOOSTER, MOD, FX, DELAY and REVERB knobs, each with its colour button above it), then CAB RESONANCE
+    with PRESENCE, SOLO with its level, and CONTOUR. Buttons, switches and menus sit above the knobs; the groups wrap
+    in a narrow window.
+  - The pages, chosen with tabs in Tone Studio's groups: EFFECTS and CHAIN; BOOSTER, MOD, FX, DELAY, DELAY2, REVERB,
+    SOLO and CONTOUR; PEDAL FX, EQ, EQ2, NS and SEND/RETURN. ASSIGN (controller assignments) comes later (section 11).
+    Tanto opens on EFFECTS, as Tone Studio does.
+  - A block's page has its on/off switch, titled with the page's name, and its type menus in a header row, then its
+    controls in Tone Studio's rows, each at Tone Studio's horizontal position while the row fits the window. Controls
+    of the types not selected are hidden. The CONTOUR page starts with the panel's CONTOUR knob.
+  - EFFECTS shows, per effect, the variations that its GREEN, RED and YELLOW buttons select, as menus; markers show the
+    colour the button has selected. CHAIN shows the seven chains with their order of blocks.
+  - The VARIATION and colour buttons are pressed as on the amp (3.5) and show the state the amp reports: OFF or ON,
+    and OFF, GREEN, RED or YELLOW. The amp reports the result of every panel change, so the display shows what the amp
     actually did.
-- Controls: numeric parameters are sliders with the value in display units (formatters from `layout.div`, e.g. `+3`,
-  `320 ms`); switches are toggles; pickers are pop-up menus. Guarded sliders show the ceiling.
+  - The generator takes each control's page, position and kind from `layout.div` (section 3.5).
+- Controls follow how Tone Studio draws a parameter: a knob for its knobs and dials (with positions for AMP TYPE and
+  CONTOUR), a vertical slider for the graphic EQs, a switch, a pop-up menu or radio buttons. Values are in display
+  units (formatters from `layout.div`, e.g. `+3`, `320 ms`). A guarded control stops at the higher of its ceiling and
+  its current value and shows "max …" below it; a refusal of `SafetyGuard` shows below the control.
 - Settings window: the ceiling percentage.
 
 ## 7. Librarian
