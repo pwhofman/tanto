@@ -56,7 +56,8 @@ Sources in Tone Studio's `Contents/Resources/html/js/`: `config/product_setting.
 - Addresses are four 7-bit bytes. Offsets are added in linear space, `linear = a3·2²¹ + a2·2¹⁴ + a1·2⁷ + a0`
   (Tone Studio's `nibble()`), and converted back afterwards.
 - Value encodings, big-endian: `INTEGER1x7` one byte; `INTEGER2x7` two bytes of 7 bits; `INTEGER2x4` two bytes of 4 bits;
-  `INTEGER4x4` four bytes of 4 bits. Displayed value = raw value − `ofs`.
+  `INTEGER4x4` four bytes of 4 bits. The address map uses only `INTEGER1x7`, `INTEGER2x7` and the 16-byte patch name.
+  Displayed value = raw value − `ofs`.
 
 ### 3.4 Memory map
 
@@ -106,7 +107,7 @@ One Swift package with two parts:
 |---------------------|----------------------------------------------------------------------------------------------------|
 | `SysEx`             | Encodes and decodes identity, RQ1 and DT1 messages; checksum; 7-bit address arithmetic; value encodings. |
 | `ParameterMap`      | Loads `parameters.json`: section, block, address, encoding, range, offset, label, option labels, formatter, kind (numeric, switch, picker, text) and the `guarded` flag. |
-| `MIDITransport`     | Protocol with two implementations. `CoreMIDITransport` finds the amp's endpoints, sends, receives and reports plug/unplug. `SimulatedAmp` is an in-memory amp with the same memory map: it answers RQ1 and DT1, sends change notifications and records every message it receives. |
+| `MIDITransport`     | Protocol with two implementations. `CoreMIDITransport` finds the amp's endpoints, sends, receives SysEx and channel messages (e.g. Program Change), and reports plug/unplug. `SimulatedAmp` is an in-memory amp with the same memory map: it answers RQ1 and DT1, sends change notifications and records every message it receives. |
 | `AmpSession` (actor) | Connect and disconnect, outgoing queue (at least 20 ms between messages, priority lane for decreases and Panic), read timeouts, mirror of the amp's memory, change stream for the UI. |
 | `SafetyGuard`       | The only path from a user action to a parameter write (section 5).                                 |
 | `Librarian`         | Channel names, cache of stored patches, select, save, rename, backup, restore.                      |
@@ -262,11 +263,12 @@ Hardware checklist, kept in `docs/hardware-checklist.md` and run together with y
 
 1. Reads and the editor-mode flag only, MASTER at minimum. Record the endpoint names, the identity reply, the editor
    level and revision. Read the channel names and the live patch and compare them with the amp's knobs, including amp
-   VOLUME at `60 00 00 28`. Log what the amp sends when you turn knobs, switch channels, change a variation colour and
-   save on the amp. Editor mode off at the end.
+   VOLUME at `60 00 00 28`. Log what the amp sends when you turn knobs, switch channels and change a variation colour.
+   Editor mode off at the end.
 2. First writes, MASTER at minimum: rename the live patch and read it back; lower amp VOLUME; Panic; one ramped increase
    within the ceiling, checked in the log. Then, at a MASTER level you choose, listen to the ramp and to Panic.
-3. Librarian, after a backup has been made and verified: save to a channel you choose, rename it, restore the backup.
+3. Librarian, after a backup has been made and verified: save on the amp (WRITE) to log its notification, save to a
+   channel you choose, rename it, restore the backup.
 
 ## 10. Build and run
 
