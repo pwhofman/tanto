@@ -401,6 +401,8 @@ class Layout(HTMLParser):
                 self._hidden[self._hidden_owner][-1] += " "
             elif self._option_owner is not None:
                 self._options[self._option_owner][-1] += " "
+            elif owner is not None:
+                self._text[owner] += " "
             return
         if tag in _VOID_TAGS:
             return

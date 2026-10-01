@@ -31,6 +31,8 @@ LAYOUT = """
   <div id="awah-panel"><div id="modfx-autowah-peak-dial"></div></div>
 </div>
 <div id="modfx-twah-peak-label"><p msg="">PEAK</p></div>
+<div id="amp-cab-resonance-select-box" class="elf-select-box-control"></div>
+<div id="amp-cab-resonance-label"><p msg="">CAB<br>RESONANCE</p></div>
 """
 
 
@@ -109,6 +111,7 @@ def test_layout_parsing() -> None:
     assert layout.options("booster-type-select-box") == ["CLEAN BOOST", "MID BOOST"]
     assert layout.label_of("booster-type-select-box") == "BOOSTER TYPE"
     assert layout.label_of("modfx-twah-peak-dial") == "PEAK"
+    assert layout.label_of("amp-cab-resonance-select-box") == "CAB RESONANCE"
     assert layout.value_labels("eq-low-cut-stringer") == ["FLAT", "20.0 Hz"]
     assert layout.value_labels("eq-level-stringer") is None
     assert layout.format_expression("eq-level-stringer") == "((value>0)? '+':'') + value + 'dB'"
