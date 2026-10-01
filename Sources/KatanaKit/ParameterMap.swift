@@ -8,8 +8,6 @@ public struct ParameterBlock: Codable, Sendable, Hashable {
     public let offset: Int
     /// Size in bytes.
     public let size: Int
-    /// Whether v1 edits this block; status and controller-assignment blocks are read-only.
-    public let editable: Bool
 }
 
 /// One parameter of the patch layout.
@@ -34,6 +32,70 @@ public struct Parameter: Codable, Sendable, Hashable {
     public let initial: Int?
     /// Whether the parameter can raise loudness and falls under the safety ceiling (design spec, section 5.2).
     public let guarded: Bool
+    /// Whether a Tone Studio control writes the parameter; Tanto writes nothing else (design spec, section 3.5).
+    public let written: Bool
+    /// How the parameter is edited.
+    public let kind: Kind
+    /// Editor section, e.g. `amp`, `booster` or `delay2`; `nil` if no v1 control shows the parameter.
+    public let section: String?
+    /// Tone Studio's on-screen label, or the name from the address map.
+    public let label: String
+    /// The choices of a picker, in menu order.
+    public let options: [Option]?
+    /// A label for every value from `minimum` to `maximum`, e.g. `["OFF", "ON"]`.
+    public let valueLabels: [String]?
+    /// How the value is displayed; `nil` for a plain number.
+    public let format: DisplayFormat?
+    /// The parameter is shown only while all of these hold; `nil` means always.
+    public let visibleWhen: [Condition]?
+
+    /// How a parameter is edited; switches and pickers get the soft switch (design spec, section 5.3).
+    public enum Kind: String, Codable, Sendable {
+        /// The 16-character patch name.
+        case text
+        /// Two values, e.g. on and off.
+        case toggle = "switch"
+        /// A choice from a list, e.g. an effect type.
+        case picker
+        /// A number in a range.
+        case numeric
+    }
+
+    /// One choice of a picker.
+    public struct Option: Codable, Sendable, Hashable {
+        /// The displayed value it sets.
+        public let value: Int
+        /// Its label.
+        public let label: String
+    }
+
+    /// A condition on another parameter, typically an effect type.
+    public struct Condition: Codable, Sendable, Hashable {
+        /// Offset of the parameter the condition is on.
+        public let offset: Int
+        /// The displayed values that satisfy the condition.
+        public let values: [Int]
+    }
+
+    /// Display formats found in Tone Studio's layout.
+    public enum DisplayFormat: String, Codable, Sendable {
+        /// `+3`, `0`, `-3`.
+        case signed
+        /// `+3dB`.
+        case signedDecibels
+        /// The value counts half decibels: `+1.5dB`.
+        case signedHalfDecibels
+        /// `320ms`.
+        case milliseconds
+        /// The value plus one.
+        case plusOne
+        /// The value counts tenths of seconds: `2.5s`.
+        case tenthsOfSeconds
+        /// `OFF` below zero, the number otherwise.
+        case offBelowZero
+        /// `50%`.
+        case percent
+    }
 
     /// Converts a raw value to the displayed value.
     ///
