@@ -96,8 +96,18 @@ A generator run by the developer (`tools/gen_parameter_map.py`, run with `uv`) t
 Only facts are taken over (addresses, ranges, labels), not Roland's code. KatanaFxFloorBoard
 (sourceforge.net/projects/fxfloorboard) is a fallback reference for unclear labels.
 
-The editor exposes exactly the parameters that Tone Studio's UI exposes. About 50 entries in `address_map.js` have no
-name. They are exposed only if Tone Studio shows them, and are never written otherwise.
+Tanto writes exactly the addresses that Tone Studio's controls write, and nothing else (decided after hardware check 1).
+Tone Studio edits the amp section only through a virtual front panel: it writes the knob positions and button states of
+the Status block (`60 00 06 50` to `60 00 06 61`). These are AMP TYPE (five positions), GAIN, VOLUME, BASS, MIDDLE,
+TREBLE and PRESENCE; the BOOSTER, MOD, FX, DELAY and REVERB knobs, where −1 means the effect is off; the VARIATION button;
+and the five colour buttons, where 0 means off and 1–3 are the colours. The amp derives its amp parameters from these, as
+when the real knobs are turned. VOLUME, BASS, MIDDLE, TREBLE and PRESENCE map one to one; GAIN goes through the amp's own
+curve (knob 34 gave gain 47 in hardware check 1). After a channel is loaded the Status block holds the saved positions
+(B2: VOLUME 88), and turning a real knob overwrites them.
+
+Tone Studio never writes the amp parameters themselves (`PRM_PREAMP_A_*`) or FOOT VOLUME. Tanto reads them but does not
+write them. The effects' detail pages write the effect parameters directly. About 50 entries in `address_map.js` have no
+name; Tanto writes them only where a Tone Studio control does.
 
 ## 4. Architecture
 
@@ -143,15 +153,17 @@ Data flow:
 
 ### 5.2 Guarded parameters
 
-A parameter is guarded if it is numeric and its internal id or Tone Studio label contains LEVEL, VOLUME, GAIN, DRIVE,
-FEEDBACK, RESONANCE, SUSTAIN, DIRECT, REGEN, ECHO INTENSITY or PEAK, or if it is a graphic-EQ band. Selectors whose names
-match (`FXBOX_*` variation settings, CABINET RESONANCE) are pickers and follow 5.3. Tone controls (BASS, MIDDLE, TREBLE,
-PRESENCE, booster TONE and BOTTOM), times, rates and depths are not guarded. Appendix A lists the 210 parameters this
-rule selects from `address_map.js`.
+A parameter is guarded if it can raise loudness: the GAIN and VOLUME knobs and the five effect knobs of the front panel,
+and every numeric parameter whose internal id or Tone Studio label contains LEVEL, VOLUME, GAIN, DRIVE, FEEDBACK,
+RESONANCE, SUSTAIN, DIRECT, REGEN, ECHO INTENSITY or PEAK, or that is a graphic-EQ band. Selectors whose names match
+(`FXBOX_*` variation settings, CABINET RESONANCE) are pickers and follow 5.3. Tone controls (the BASS, MIDDLE, TREBLE and
+PRESENCE knobs, booster TONE and BOTTOM), times, rates and depths are not guarded. Appendix A lists the guarded
+parameters. The rule also marks amp parameters and FOOT VOLUME, which Tanto does not write (3.5); for those it serves
+only the channel check of 5.4 and the warnings.
 
 - Ceiling: `ceiling = min + ⌊f · (max − min)⌋` with f = 50 % by default. f is set in Settings from 0 % to 100 % in 5 %
-  steps; raising it asks for confirmation. At 50 %: amp VOLUME 50, GAIN 60, delay EFFECT LEVEL 60, EQ gains and levels
-  0 dB.
+  steps; raising it asks for confirmation. At 50 %: VOLUME and GAIN knobs 50, effect knobs 49, delay EFFECT LEVEL 60,
+  EQ gains and levels 0 dB.
 - A requested value above the ceiling and above the current value is refused with a message at the control, and the
   control returns to the amp's value. Values are never clipped silently.
 - A value that is already above the ceiling (set on the amp, or stored in a patch) is shown with a warning. It can be
@@ -160,16 +172,18 @@ rule selects from `address_map.js`.
   The 20 ms pacing can only make a ramp slower.
 - Decreases take the next message slot through the priority lane, ahead of queued increases, and cancel any ramp of the
   same parameter. The 20 ms spacing applies to every message, including priority ones.
+- An effect knob turned up from −1 switches its effect on at the lowest amount and then ramps like any increase.
 
 ### 5.3 Switches and pickers
 
-Switches and pickers in the sound path (block on/off, amp type, effect types, variation colours and their assignments,
-chain, block positions, contour, cabinet resonance) use a soft switch:
+Switches and pickers in the sound path (block on/off, the AMP TYPE knob, the VARIATION and colour buttons, effect types,
+colour assignments, chain, block positions, contour, cabinet resonance) use a soft switch:
 
-1. If amp VOLUME is above the ceiling, the change is refused with the message "Lower amp VOLUME below the ceiling first".
-2. Amp VOLUME is set to 0 at once.
+1. If the VOLUME knob is above the ceiling, the change is refused with the message "Lower VOLUME below the ceiling
+   first".
+2. The VOLUME knob is set to 0 at once.
 3. The change is sent.
-4. Amp VOLUME ramps back to its previous value under the rules of 5.2.
+4. The VOLUME knob ramps back to its previous value under the rules of 5.2.
 
 Patch-name edits are not soft-switched.
 
@@ -188,9 +202,10 @@ above unchanged: every switch to such a channel asks first, and effect switches 
 
 ### 5.5 Panic
 
-Toolbar button and the Esc key. Panic clears the outgoing queue, cancels all ramps and sends amp VOLUME (`60 00 00 28`)
-= 0 and FOOT VOLUME (`60 00 05 61`) = 0 in the next two message slots. Both stay at 0 until raised by hand, which
-is ramped and limited by the ceiling. Panic changes only the live patch; stored channels are untouched.
+Toolbar button and the Esc key. Panic clears the outgoing queue, cancels all ramps and sets the VOLUME knob
+(`60 00 06 52`) to 0 in the next message slot. Like turning the real VOLUME knob down, this sets the amp volume
+(`60 00 00 28`) to 0, as hardware check 1 showed. The volume stays at 0 until raised by hand, which is ramped and limited
+by the ceiling. Panic changes only the live patch; stored channels are untouched.
 
 ### 5.6 Outside the app's control
 
@@ -213,11 +228,14 @@ One window:
 - Toolbar: connection status, current channel, Panic.
 - Sidebar: PANEL, A1–A4 and B1–B4 with their names; the current channel is highlighted; clicking a channel switches to
   it (5.4). Context menu: "Save Live Sound Here…", "Rename…". Backup and Restore are in the File menu.
-- Editor: the patch name, then the sections Booster, Amp, Mod, FX, Delay, Delay 2, Reverb, EQ 1, EQ 2, Pedal FX, Noise
-  Suppressor, Send/Return, Solo, Foot Volume, Contour, Chain. Each section shows its on/off switch, its variation colour
-  and type where it has them, and then the parameters of the selected type. Sections and the parameters per type follow
-  Tone Studio's UI grouping; its control ids carry a section prefix such as `booster-` or `delay2-`. After a variation
-  colour change the app re-reads the section, so the display shows what the amp actually did.
+- Editor: the patch name, then the sections Amp, Booster, Mod, FX, Delay, Delay 2, Reverb, EQ 1, EQ 2, Pedal FX, Noise
+  Suppressor, Send/Return, Solo, Contour, Chain.
+  - Amp is the front panel: AMP TYPE, VARIATION, GAIN, VOLUME, BASS, MIDDLE, TREBLE, PRESENCE and CAB RESONANCE.
+  - Booster, Mod, FX, Delay and Reverb each show their panel knob and colour button, then their on/off switch and type,
+    then the detail parameters of the selected type.
+  - Sections and the parameters per type follow Tone Studio's UI grouping; its control ids carry a section prefix such
+    as `booster-` or `delay2-`. The amp reports the result of every panel change, so the display shows what the amp
+    actually did.
 - Controls: numeric parameters are sliders with the value in display units (formatters from `layout.div`, e.g. `+3`,
   `320 ms`); switches are toggles; pickers are pop-up menus. Guarded sliders show the ceiling.
 - Settings window: the ceiling percentage.
@@ -257,7 +275,7 @@ Automated, with `swift test` and no amp:
 - `SysEx`: encode/decode round trips; checksums against messages from Tone Studio's sources and from hardware check 1;
   7-bit address arithmetic; every value encoding.
 - `ParameterMap`: no overlapping addresses; ranges consistent with encodings; the guarded set equals appendix A plus the
-  reviewed additions from 3.5; the Panic addresses resolve to amp VOLUME and FOOT VOLUME.
+  reviewed additions from 3.5; the Panic address resolves to the VOLUME knob.
 - `SafetyGuard`: refusal above the ceiling; ramps are monotonic and respect step size and spacing; decreases go out at
   once and cancel ramps; the soft-switch sequence, including its refusal above the ceiling; Panic clears the queue and
   goes first; connecting and incoming amp messages produce no writes; random sequences of UI actions never produce a
@@ -303,13 +321,17 @@ docs/
 
 ## Appendix A: guarded parameters
 
-Selected by the rule in 5.2 from `address_map.js`: 210 parameters. Ceilings at the default of 50 %.
+Selected by the rule in 5.2: the seven front-panel knobs plus 210 parameters of `address_map.js`. Ceilings at the
+default of 50 %. Rows marked "read only" are amp parameters that Tanto reads but never writes (3.5); they count for the
+channel check of 5.4 and for warnings.
 
 | Section           | Parameters                                                        | Range → ceiling     |
 |-------------------|-------------------------------------------------------------------|---------------------|
+| Front panel       | GAIN and VOLUME knobs                                             | 0–100 → 50          |
+|                   | BOOSTER, MOD, FX, DELAY and REVERB knobs                          | −1…100 → 49         |
 | Booster           | DRIVE                                                             | 0–120 → 60          |
 |                   | EFFECT LEVEL, DIRECT MIX, SOLO LEVEL                              | 0–100 → 50          |
-| Amp               | GAIN                                                              | 0–120 → 60          |
+| Amp, read only    | GAIN                                                              | 0–120 → 60          |
 |                   | VOLUME (`PREAMP_A_LEVEL`), SOLO LEVEL                             | 0–100 → 50          |
 | EQ 1, EQ 2 (each) | parametric LOW, LOW-MID, HIGH-MID and HIGH GAIN; LEVEL            | −20…+20 dB → 0 dB   |
 |                   | graphic 31 Hz … 16 kHz (10 bands); LEVEL                          | −24…+24 dB → 0 dB   |
@@ -318,7 +340,7 @@ Selected by the rule in 5.2 from `address_map.js`: 210 parameters. Ceilings at t
 |                   | EFFECT LEVEL                                                      | 0–120 → 60          |
 | Reverb            | EFFECT LEVEL, DIRECT MIX                                          | 0–100 → 50          |
 | Pedal FX          | EFFECT LEVEL and DIRECT MIX of WAH, PEDAL BEND and EVH95          | 0–100 → 50          |
-| Foot Volume       | FOOT VOLUME                                                       | 0–100 → 50          |
+| Foot Volume, read only | FOOT VOLUME                                                  | 0–100 → 50          |
 | Send/Return       | SEND LEVEL, RETURN LEVEL                                          | 0–100 → 50          |
 | Solo              | LEVEL; delay FEEDBACK and DIRECT LEVEL                            | 0–100 → 50          |
 |                   | delay EFFECT LEVEL                                                | 0–120 → 60          |
