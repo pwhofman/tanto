@@ -41,6 +41,10 @@ From its JavaScript, so that Tanto sends the same messages:
 5. **Saving** waits until the guard has finished its ramps, so that the channel stores what the window shows. After the
    amp confirms the save, Tanto selects that channel, as Tone Studio does. The sound does not change: the channel now
    holds the live sound.
+6. **The switch check covers the front-panel volumes** (decided by the user during task 3): the VOLUME, GAIN, BOOSTER,
+   MOD, FX, DELAY and REVERB knobs, and the amp volume. Tone Studio's defaults alone put 56 guarded values above the
+   50 % ceiling in every channel, mostly levels of effect types the channel does not use. Checking all of them would ask
+   on almost every switch.
 
 ## Tasks
 
@@ -89,7 +93,7 @@ Each failure has its own reason.
 `Librarian` (KatanaKit) uses the session and the guard:
 
 - `read(slot)` reads a stored channel.
-- `valuesAboveCeiling(slot)` lists the stored guarded values above the ceiling (`SafetyGuard.valuesAboveCeiling(in:)`).
+- `valuesAboveCeiling(slot)` lists the stored front-panel volumes above the ceiling (decision 6).
 - `select(slot)` switches channels.
 - `save(to:)`:
   - waits for `SafetyGuard.settle()`;
