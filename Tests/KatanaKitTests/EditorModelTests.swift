@@ -98,7 +98,7 @@ private func connectedModel() async throws -> (EditorModel, SimulatedAmp) {
         ])
     let booster = try #require(model.sections.first { $0.id == "booster" })
     #expect(booster.title == "Booster")
-    #expect(booster.parameters.prefix(2).map(\.prm) == ["PRM_KNOB_POS_BOOST", "PRM_LED_STATE_BOOST"])
+    #expect(booster.parameters.prefix(2).map(\.prm) == ["PRM_KNOB_POS_BOOST", "PRM_ODDS_SW"])
     #expect(model.sections.allSatisfy { $0.parameters.allSatisfy { $0.written && $0.kind != .text } })
 }
 

@@ -1,8 +1,10 @@
 import json
+import re
 
 import pytest
 
 from gen_parameter_map import (
+    COMMAND_BUTTONS,
     DEFAULT_HTML,
     Layout,
     ParameterRow,
@@ -166,6 +168,13 @@ def test_real_controls() -> None:
         assert (ratio["guarded"], ratio["louder"]) == (False, "down")
     assert by_key[("Fx(1)", "PRM_FX1_TREMOLO_DEPTH")]["louder"] is None
     assert sum(1 for p in parameters if p["louder"]) == 217 + 4
+
+    # The panel's VARIATION and colour buttons send a button press instead of writing the LED they show.
+    controller = (DEFAULT_HTML / "js/businesslogic/bts/effect_controller.js").read_text(encoding="utf-8")
+    assert set(re.findall(r"'([\w-]+)':\s*\{\s*addr:\s*0x7F0101", controller)) == COMMAND_BUTTONS
+    for led in ("VARI", "BOOST", "MOD", "FX", "DELAY", "REVERB"):
+        assert not by_key[("Status", f"PRM_LED_STATE_{led}")]["written"], led
+    assert sum(1 for p in parameters if p["written"]) == 616
 
     # T.WAH PEAK shows for MOD/FX type 0 only, in both the MOD (Fx(1)) and the FX (Fx(2)) block.
     assert by_offset[134]["visibleWhen"] == [{"offset": 129, "values": [0]}]

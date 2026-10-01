@@ -97,11 +97,13 @@ Only facts are taken over (addresses, ranges, labels), not Roland's code. Katana
 (sourceforge.net/projects/fxfloorboard) is a fallback reference for unclear labels.
 
 Tanto writes exactly the addresses that Tone Studio's controls write, and nothing else (decided after hardware check 1).
-Tone Studio edits the amp section only through a virtual front panel: it writes the knob positions and button states of
-the Status block (`60 00 06 50` to `60 00 06 61`). These are AMP TYPE (five positions), GAIN, VOLUME, BASS, MIDDLE,
-TREBLE and PRESENCE; the BOOSTER, MOD, FX, DELAY and REVERB knobs, where −1 means the effect is off; the VARIATION button;
-and the five colour buttons, where 0 means off and 1–3 are the colours. The amp derives its amp parameters from these, as
-when the real knobs are turned. VOLUME, BASS, MIDDLE, TREBLE and PRESENCE map one to one; GAIN goes through the amp's own
+Tone Studio edits the amp section only through a virtual front panel: it writes the knob positions of the Status block
+(`60 00 06 50` to `60 00 06 61`). These are AMP TYPE (five positions), GAIN, VOLUME, BASS, MIDDLE, TREBLE and PRESENCE,
+and the BOOSTER, MOD, FX, DELAY and REVERB knobs, where −1 means the effect is off. The amp derives its amp parameters
+from these, as when the real knobs are turned. The VARIATION and colour buttons are pressed instead: a DT1 of `00` to
+`7F 01 01 00` (VARIATION) or `7F 01 01 01` to `05` (BOOSTER to REVERB) does what pressing the real button does. Their
+LEDs in the Status block, where 0 means off and 1–3 are the colours, only show the result; writing them changes nothing
+(hardware check 2b). VOLUME, BASS, MIDDLE, TREBLE and PRESENCE map one to one; GAIN goes through the amp's own
 curve (knob 34 gave gain 47 in hardware check 1). After a channel is loaded the Status block holds the saved positions
 (B2: VOLUME 88), and turning a real knob overwrites them.
 

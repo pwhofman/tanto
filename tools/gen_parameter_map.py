@@ -86,6 +86,20 @@ _FORMATS = {
 _PICKER_CLASSES = frozenset({"select-box", "toggle-button", "radio-button", "check-box"})
 # Controls that only display a value, or duplicate another control; they do not make a parameter written.
 _DISPLAY_ONLY = re.compile(r"-(watcher|dummy)$")
+# Panel buttons that send a button press, a DT1 of 00 to 7F 01 01 0n, instead of writing the parameter they show, which
+# for the VARIATION and colour buttons is their LED (`panelActionBtnInfo` in js/businesslogic/bts/effect_controller.js).
+COMMAND_BUTTONS = frozenset(
+    {
+        "panel-amp-type-vari-btn",
+        "panel-booster-btn",
+        "panel-mod-btn",
+        "panel-fx-btn",
+        "panel-delay-btn",
+        "panel-reverb-btn",
+        "delay-tap-btn",
+        "delay2-tap-btn",
+    }
+)
 _VOID_TAGS = frozenset({"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "wbr"})
 
 
@@ -706,7 +720,7 @@ def annotate(table: Table, items: dict[str, dict[str, object]], layout_text: str
                     ident=control_id,
                     section=section,
                     control_class=layout.control_class(control_id),
-                    written=_DISPLAY_ONLY.search(control_id) is None,
+                    written=_DISPLAY_ONLY.search(control_id) is None and control_id not in COMMAND_BUTTONS,
                     label=layout.label_of(control_id),
                     options=options,
                     value_labels=value_labels,

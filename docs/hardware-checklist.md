@@ -130,13 +130,13 @@ Afterwards, turn MASTER to minimum, then switch to another channel and back.
 
 | Item | Result |
 |---|---|
-| Not connected while the amp is off | |
-| Connects by itself; channel, values and warnings shown | |
-| VOLUME lowered with the slider; the slider ends at the ceiling | |
-| Esc sets VOLUME to 0 | |
-| Booster on and off: VOLUME dips and comes back | |
-| Colour LED order (OFF, GREEN, RED, YELLOW) matches the amp | |
-| Not connected when switched off; reconnects when switched on | |
+| Not connected while the amp is off | Yes. |
+| Connects by itself; channel, values and warnings shown | Yes; VOLUME 88 in orange. |
+| VOLUME lowered with the slider; the slider ends at the ceiling | Yes; the slider stops at 50. |
+| Esc sets VOLUME to 0 | Yes. |
+| Booster on and off: VOLUME dips and comes back | Yes. |
+| Colour LED order (OFF, GREEN, RED, YELLOW) matches the amp | Failed: every choice went back to GREEN and the amp did not change. Tanto wrote the LED register `60 00 06 5D`, which only shows the colour; Tone Studio never writes it. Its colour buttons send a button press, `00` to `7F 01 01 01`–`05`, and VARIATION one to `7F 01 01 00` (`panelActionBtnInfo` in `js/businesslogic/bts/effect_controller.js`). |
+| Not connected when switched off; reconnects when switched on | Yes. |
 | Audible Esc and booster switch | |
 | The window's look: anything unclear or wrong | |
 
