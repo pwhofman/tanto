@@ -198,17 +198,17 @@ private struct EditorView: View {
                 }
                 ForEach(model.sections) { section in
                     GroupBox(section.title) {
-                        // The front panel first, as on the amp: knobs, then buttons, then the rest of the section.
-                        let parameters = section.parameters.filter(model.isVisible)
-                        VStack(alignment: .leading, spacing: 6) {
-                            ForEach(parameters.filter { $0.block == "Status" }, id: \.offset) { parameter in
-                                ParameterRow(model: model, parameter: parameter)
-                            }
+                        VStack(alignment: .leading, spacing: 10) {
                             ForEach(section.buttons, id: \.self) { button in
                                 PanelButtonRow(model: model, button: button)
                             }
-                            ForEach(parameters.filter { $0.block != "Status" }, id: \.offset) { parameter in
-                                ParameterRow(model: model, parameter: parameter)
+                            LazyVGrid(
+                                columns: [GridItem(.adaptive(minimum: 96), alignment: .top)], alignment: .leading,
+                                spacing: 14
+                            ) {
+                                ForEach(section.parameters.filter(model.isVisible), id: \.offset) { parameter in
+                                    ControlView(model: model, parameter: parameter)
+                                }
                             }
                         }
                         .padding(6)
