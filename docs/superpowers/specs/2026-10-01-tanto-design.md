@@ -34,15 +34,16 @@ Apple Silicon Mac, macOS 27.0.1, Swift 6.4 from the Command Line Tools (includes
   Interfaces 0–2 carry audio and are served by `/Library/Audio/Plug-Ins/HAL/RDUSB01D8Audio.driver`. Interface 3 carries
   MIDI and is claimed by MIDIServer through `/Library/Audio/MIDI Drivers/RDUSB01D8Midi.plugin` (v1.0.4, universal
   arm64/x86_64).
-- The Boss driver is a prerequisite. With it, the amp is an ordinary CoreMIDI device. The endpoint names were not
-  captured because the amp was switched off; hardware check 1 records them.
+- The Boss driver is a prerequisite. With it, the amp is an ordinary CoreMIDI device with two ports, `KATANA` and
+  `KATANA KATANA DAW CTRL` (for controlling recording software). Tone Studio and Tanto use `KATANA`.
 
 ### 3.3 Protocol
 
 Sources in Tone Studio's `Contents/Resources/html/js/`: `config/product_setting.js`, `businesslogic/bts/address_const.js`,
 `businesslogic/bts/midi_connect_controller.js`, `utilities/converter.js`, `utilities/constant.js`.
 
-- Roland SysEx with device ID `10` and model ID `00 00 00 33`:
+- Roland SysEx with model ID `00 00 00 33` and the device ID from the amp's identity reply. Tone Studio's default
+  is `10`; the user's amp answers as `00` and ignores messages for other device IDs.
   - RQ1 (read): `F0 41 10 00 00 00 33 11 a3 a2 a1 a0 s3 s2 s1 s0 cs F7`
   - DT1 (write): `F0 41 10 00 00 00 33 12 a3 a2 a1 a0 d… cs F7`
   - `cs = (128 − (sum of address and size/data bytes) mod 128) mod 128`
@@ -50,9 +51,11 @@ Sources in Tone Studio's `Contents/Resources/html/js/`: `config/product_setting.
   `06 02 41 33 03`.
 - Tone Studio leaves 20 ms between outgoing messages, splits reads into chunks of at most 128 data bytes
   (`SYSEX_MAXLEN`) and times out reads after 15 s. Tanto uses the same 128-byte limit for writes.
-- Tone Studio's connect sequence: identity request; RQ1 `7F 00 00 00` (editor communication level, 1 byte; Tone
-  Studio's own level is 8); DT1 `7F 00 00 01` = `01` (editor communication mode on); RQ1 `7F 00 00 03` (editor
-  communication revision, 1 byte). On disconnect it sends DT1 `7F 00 00 01` = `00`.
+- Tone Studio's connect sequence: identity request, after which it uses the device ID from the reply; RQ1
+  `7F 00 00 00` (editor communication level, 1 byte), which must be 8 or Tone Studio disconnects; DT1 `7F 00 00 01` =
+  `01` (editor communication mode on). It reads a revision at `7F 00 00 03` only when its settings define
+  `communicationRevision`, which the KATANA MkII build does not, and the amp does not answer that read. On disconnect
+  it sends DT1 `7F 00 00 01` = `00`.
 - Addresses are four 7-bit bytes. Offsets are added in linear space, `linear = a3·2²¹ + a2·2¹⁴ + a1·2⁷ + a0`
   (Tone Studio's `nibble()`), and converted back afterwards.
 - Value encodings, big-endian: `INTEGER1x7` one byte; `INTEGER2x7` two bytes of 7 bits; `INTEGER2x4` two bytes of 4 bits;
@@ -233,7 +236,7 @@ One window:
 |--------------------------------------------------|-------------------------------------------------------------------------------------|
 | Amp off or unplugged                             | "Not connected", controls disabled. When the amp reappears, the connect sequence runs again. |
 | Identity reply does not match                    | No connection; the message names the device found.                                  |
-| Editor revision differs from hardware check 1    | Message; the editor is read-only.                                                   |
+| Editor communication level is not 8             | No connection, editor mode stays off; message.                                      |
 | No reply to a read within 3 s                    | One retry, then nothing more is sent and "Connection problem" offers Reconnect.     |
 | No patch-write confirmation within 15 s          | Error message; the channel is re-read.                                              |
 | Malformed message or bad checksum from the amp   | Dropped and logged; the affected block is re-read.                                  |
@@ -261,8 +264,8 @@ Automated, with `swift test` and no amp:
 
 Hardware checklist, kept in `docs/hardware-checklist.md` and run together with you:
 
-1. Reads and the editor-mode flag only, MASTER at minimum. Record the endpoint names, the identity reply, the editor
-   level and revision. Read the channel names and the live patch and compare them with the amp's knobs, including amp
+1. Reads and the editor-mode flag only, MASTER at minimum. Record the endpoint names, the identity reply and the
+   editor communication level. Read the channel names and the live patch and compare them with the amp's knobs, including amp
    VOLUME at `60 00 00 28`. Log what the amp sends when you turn knobs, switch channels and change a variation colour.
    Editor mode off at the end.
 2. First writes, MASTER at minimum: rename the live patch and read it back; lower amp VOLUME; Panic; one ramped increase
