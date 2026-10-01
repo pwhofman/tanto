@@ -373,6 +373,10 @@ docs/
 - Global settings and controller assignments. The guard then extends to system levels: global EQ level, cab EQ level,
   USB levels.
 - Visual design.
+- A simulator that sounds: try out settings without the amp by playing a guitar, or a recorded dry track, through a
+  model of the Katana's amp and effects in Tanto itself. Today's `SimulatedAmp` only answers MIDI messages and makes no
+  sound. This needs its own design: which parts of the amp to model, how closely, and how it stays apart from the safety
+  rules for the real amp.
 
 ## Appendix A: guarded parameters
 
