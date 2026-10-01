@@ -104,6 +104,42 @@ VOLUME 88, above the ceiling.
 
 Afterwards MASTER went back to minimum, and switching to another channel and back restored the stored sound.
 
+## Check 2b: the app
+
+Before starting: POWER CONTROL at 0.5 W, MASTER at minimum, BOSS TONE STUDIO closed. Build the app with
+`scripts/build-app.sh`.
+
+Steps, silent:
+
+1. Switch the amp off and open `build/Tanto.app`. The toolbar shows "Not connected".
+2. Switch the amp on. Tanto connects by itself, shows the channel in the toolbar and the live patch in the window, and
+   the values match the amp's knobs. A value above its ceiling shows in orange.
+3. Lower VOLUME with its slider to about 30. The slider ends at the ceiling, so it cannot raise VOLUME above it.
+4. Press Esc: VOLUME goes to 0 in the window and on the amp.
+5. Raise VOLUME to about 20, then switch the booster on and off with its SW switch: each time VOLUME dips to 0 and
+   comes back.
+6. Choose GREEN, RED, YELLOW and OFF in the booster's colour menu (the BOOSTER pop-up menu under the knob): the
+   BOOSTER LED on the amp shows the same colour each time.
+7. Switch the amp off: the toolbar shows "Not connected". Switch it on again: Tanto reconnects.
+
+Steps, audible, only with the user's OK and at a MASTER level the user chooses: repeat steps 4 and 5 while playing.
+
+Afterwards, turn MASTER to minimum, then switch to another channel and back.
+
+### Results
+
+| Item | Result |
+|---|---|
+| Not connected while the amp is off | |
+| Connects by itself; channel, values and warnings shown | |
+| VOLUME lowered with the slider; the slider ends at the ceiling | |
+| Esc sets VOLUME to 0 | |
+| Booster on and off: VOLUME dips and comes back | |
+| Colour LED order (OFF, GREEN, RED, YELLOW) matches the amp | |
+| Not connected when switched off; reconnects when switched on | |
+| Audible Esc and booster switch | |
+| The window's look: anything unclear or wrong | |
+
 ## Check 3: librarian
 
 Specified in plan 3: after a verified backup, saving on the amp (WRITE) to see its notification, saving the live sound
