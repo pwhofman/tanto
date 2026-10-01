@@ -134,22 +134,24 @@ Data flow:
   background, the 9 stored patches. Apart from the editor-mode flag, connecting only reads.
 - Edit: control → `SafetyGuard` → queue → DT1 to `60 00 …` → mirror.
 - Amp to app: with editor mode on, the amp sends DT1 messages for changes made on the amp. The mirror and the UI follow;
-  no write is triggered. On a channel change the live patch is re-read. Tone Studio's handler for current-patch-number
-  messages is commented out in 2.1.0, so hardware check 1 establishes which message signals a channel change.
+  no write is triggered, apart from the correction of 5.8. On a channel change the amp sends its channel number and then
+  the whole new patch; the mirror is valid again once that dump has covered it (5.8).
 - Quit or disconnect: editor mode off.
 
 ## 5. Safety
 
 ### 5.1 Always on
 
-1. No automatic writes. Launch, connect and reconnect only read, apart from the editor-mode flag. Messages from the amp
-   never trigger a write.
+1. No automatic writes. Launch, connect and reconnect only read, apart from the editor-mode flag and a Panic pressed
+   meanwhile. Messages from the amp never trigger a write, except the correction of 5.8, which only lowers a value
+   that Tanto itself wrote.
 2. Every outgoing DT1 is one of: a parameter write that `SafetyGuard` produced from a user action; a whitelisted command
    (`7F 00 00 01` editor mode, `7F 00 01 00` patch select, `7F 00 01 04` patch write); a librarian write (save, rename,
    restore) after confirmation.
 3. Validation before sending: the address belongs to `ParameterMap`, the value is within range, the encoding and the
    checksum are correct. Anything else is refused and logged. The UI has no way to send raw SysEx.
-4. At most one message per 20 ms. A slider drag sends only its latest value.
+4. At most one message per 20 ms. A slider drag sends only its latest value, and after Panic it sends nothing until
+   it ends.
 
 ### 5.2 Guarded parameters
 
@@ -207,6 +209,11 @@ Toolbar button and the Esc key. Panic clears the outgoing queue, cancels all ram
 (`60 00 00 28`) to 0, as hardware check 1 showed. The volume stays at 0 until raised by hand, which is ramped and limited
 by the ceiling. Panic changes only the live patch; stored channels are untouched.
 
+VOLUME 0 goes ahead of every queued message, also while a read waits for its reply, and nothing decided before Panic is
+sent after it; requests still being decided are refused. While connecting, VOLUME 0 goes out as soon as the amp is in
+editor mode. Panic sets only the VOLUME knob register: delay and reverb tails already sounding die out by themselves, and
+touching the real VOLUME knob sets the register to the knob's position again.
+
 ### 5.6 Outside the app's control
 
 The amp's MIDI map has no MASTER or POWER CONTROL parameter. Both stay hardware-only and remain the final safety limit.
@@ -220,6 +227,26 @@ ceiling.
   editor-mode flag need your explicit OK and MASTER at minimum.
 - The first write tests are silent (renaming the live patch) or lower the volume.
 - Audible checks (ramp, Panic) happen only at a MASTER level you choose.
+
+### 5.8 Changes on the amp while Tanto writes
+
+The amp's knobs and buttons keep working while Tanto writes, and their reports reach Tanto a little later. The
+independent review of the safety core (plan 2c) showed how such a report can cross a write of Tanto's. These rules
+apply:
+
+- Every write carries what it was decided on: the channel generation, the Panic count, and the number of reports the
+  amp has sent about the parameter (for a switch change also about VOLUME). The session checks them right before sending
+  and drops the write if any of them changed.
+- A channel change reported by the amp ends all of Tanto's work and makes the mirror invalid until the amp's dump of the
+  new patch has covered it. Requests are refused meanwhile.
+- A request counts as a decrease only if it lies below every value the amp may hold: the mirror, and a write of Tanto's
+  that a report may have crossed. A rise starts from the lowest of these values.
+- A report that arrives within 100 ms after a write of Tanto's to the same parameter, or a channel change within 100 ms
+  after it, may have lost against that write on the amp. Once the parameter has been quiet for 150 ms and the mirror is
+  valid, Tanto reads it back. If the amp holds Tanto's value and the amp's own value is lower (the knob's last report,
+  or the stored value of the new channel), Tanto writes the amp's own value.
+- What remains: a write already on its way when a channel is selected on the amp lands on the new channel. A guarded
+  value is set back as above; a switch or picker change stays, and the mirror shows it after the read-back.
 
 ## 6. UI (v1)
 
@@ -259,6 +286,7 @@ One window:
 | Identity reply does not match                    | No connection; the message names the device found.                                  |
 | Editor communication level is not 8             | No connection, editor mode stays off; message.                                      |
 | No reply to a read within 3 s                    | One retry, then nothing more is sent and "Connection problem" offers Reconnect.     |
+| A reply after its read timed out                 | Applied as a read, not as a change made on the amp.                                 |
 | No patch-write confirmation within 15 s          | Error message; the channel is re-read.                                              |
 | Malformed message or bad checksum from the amp   | Dropped and logged; the affected block is re-read.                                  |
 | Write refused (validation or ceiling)            | Message at the control; nothing is sent.                                            |
@@ -279,7 +307,8 @@ Automated, with `swift test` and no amp:
 - `SafetyGuard`: refusal above the ceiling; ramps are monotonic and respect step size and spacing; decreases go out at
   once and cancel ramps; the soft-switch sequence, including its refusal above the ceiling; Panic clears the queue and
   goes first; connecting and incoming amp messages produce no writes; random sequences of UI actions never produce a
-  write above a ceiling or a faster rise than allowed.
+  write above a ceiling or a faster rise than allowed; the scenarios of the independent review (plan 2c), in which
+  knob turns and channel switches on the amp cross Tanto's writes.
 - Integration with `SimulatedAmp`: connect sequence, editing, channel switch with the ceiling dialog, save, rename, and a
   backup → restore round trip that must be byte-identical.
 

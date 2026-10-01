@@ -75,6 +75,10 @@ Steps, silent:
 4. `swift run TantoProbe --connect --check2 ramp --master-at-minimum --log check2-ramp.probe-log.txt` raises the
    VOLUME knob by up to 10, at most to the ceiling. The log should show one step per message, at least 20 ms apart.
 
+In steps 1–4 the probe prints every message the amp sends by itself as an `amp` line. There should be none: if the amp
+echoes Tanto's writes, each echo looks like a knob turn to the guard (plan 2c, m9), and a ramp stops after one step.
+Stop and report if `amp` lines appear.
+
 Steps, audible, only with the user's OK and at a MASTER level the user chooses:
 
 5. Repeat step 4 while playing: the volume rises gradually.
@@ -90,6 +94,7 @@ Afterwards, switch to another channel and back.
 | Lower: VOLUME knob and amp volume after | |
 | Panic: VOLUME knob and amp volume after | |
 | Ramp: steps and spacing in the log | |
+| No `amp` lines in steps 1–4 (the amp does not echo Tanto's writes) | |
 | Audible ramp | |
 | Audible Panic | |
 | Colour LED order (OFF, GREEN, RED, YELLOW) matches the amp | |
