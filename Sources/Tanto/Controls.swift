@@ -26,7 +26,6 @@ struct ControlView: View {
                 Text(refusal).font(.caption2).foregroundStyle(.red).multilineTextAlignment(.center)
             }
         }
-        .frame(minWidth: 60)
     }
 }
 
@@ -34,8 +33,9 @@ struct ControlView: View {
 /// changes, then selects the contour.
 struct ContourKnob: View {
     let model: EditorModel
-    let onOff: Parameter
-    let select: Parameter
+
+    private var onOff: Parameter { model.map.panelParameter("PRM_CONTOUR_SW") }
+    private var select: Parameter { model.map.panelParameter("PRM_CONTOUR_SELECT") }
 
     var body: some View {
         let on = (model.value(of: onOff) ?? onOff.minimum) != onOff.minimum
@@ -49,7 +49,6 @@ struct ContourKnob: View {
                 Text(refusal).font(.caption2).foregroundStyle(.red).multilineTextAlignment(.center)
             }
         }
-        .frame(minWidth: 60)
     }
 
     private func choose(_ contour: Int) async {

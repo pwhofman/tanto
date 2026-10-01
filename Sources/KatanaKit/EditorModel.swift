@@ -21,27 +21,35 @@ public final class EditorModel {
         case failed(String)
     }
 
-    /// One section of the editor.
-    public struct Section: Identifiable, Sendable {
-        /// The section name used in the parameter table, e.g. `booster`.
-        public let id: String
-        /// The title shown in the window.
+    /// One page of the editor, as BOSS TONE STUDIO has them below its front panel.
+    public struct Page: Identifiable, Sendable {
+        /// Tone Studio's tab title, e.g. `BOOSTER` or `SEND/RETURN`.
         public let title: String
-        /// The parameters Tanto may write, front-panel controls first, then in address order.
+        /// The parameters Tanto may write that Tone Studio shows on the page, in address order.
         public let parameters: [Parameter]
+
+        /// The title, which no other page has.
+        public var id: String { title }
     }
 
-    // Spec section 6.
-    private static let sectionTitles = [
-        ("amp", "Amp"), ("booster", "Booster"), ("mod", "Mod"), ("fx", "FX"), ("delay", "Delay"), ("delay2", "Delay 2"),
-        ("reverb", "Reverb"), ("eq1", "EQ 1"), ("eq2", "EQ 2"), ("pedalfx", "Pedal FX"), ("ns", "Noise Suppressor"),
-        ("sendreturn", "Send/Return"), ("solo", "Solo"), ("contour", "Contour"), ("chain", "Chain"),
+    // Tone Studio's tabs in its groups, each with the section of its parameters and Tone Studio's page for them. MOD and
+    // FX share a page, as do DELAY and DELAY2. The EFFECTS, CHAIN and ASSIGN tabs are not here yet.
+    private static let pageSources = [
+        [
+            ("BOOSTER", "booster", "booster"), ("MOD", "mod", "modfx"), ("FX", "fx", "modfx"),
+            ("DELAY", "delay", "delay"), ("DELAY2", "delay2", "delay"), ("REVERB", "reverb", "reverb"),
+            ("SOLO", "solo", "solo"), ("CONTOUR", "contour", "contour"),
+        ],
+        [
+            ("PEDAL FX", "pedalfx", "pedalfx"), ("EQ", "eq1", "eq"), ("EQ2", "eq2", "eq2"), ("NS", "ns", "ns"),
+            ("SEND/RETURN", "sendreturn", "sr"),
+        ],
     ]
 
     /// The parameter table.
     public let map: ParameterMap
-    /// The editor sections.
-    public let sections: [Section]
+    /// The editor's pages, in Tone Studio's groups of tabs.
+    public let pages: [[Page]]
     /// The connection state.
     public private(set) var connection = Connection.notConnected
     /// Displayed values of the live patch, by parameter offset.
@@ -99,13 +107,14 @@ public final class EditorModel {
     /// - Parameter map: The parameter table.
     public init(map: ParameterMap) {
         self.map = map
-        sections = Self.sectionTitles.map { id, title in
-            let parameters = map.table.parameters.filter { $0.section == id && $0.written && $0.kind != .text }
-            return Section(
-                id: id, title: title,
-                parameters: parameters.sorted {
-                    ($0.block == "Status" ? 0 : 1, $0.offset) < ($1.block == "Status" ? 0 : 1, $1.offset)
-                })
+        pages = Self.pageSources.map { group in
+            group.map { title, section, page in
+                Page(
+                    title: title,
+                    parameters: map.table.parameters.filter {
+                        $0.section == section && $0.page == page && $0.written && $0.kind != .text
+                    })
+            }
         }
     }
 
@@ -293,7 +302,7 @@ public final class EditorModel {
     /// Asks `SafetyGuard` for a new value; a refusal is kept as the control's message.
     ///
     /// - Parameters:
-    ///   - parameter: A parameter from `sections`.
+    ///   - parameter: A parameter from `pages` or the front panel.
     ///   - value: The displayed value.
     public func set(_ parameter: Parameter, to value: Int) async {
         guard let safety else {

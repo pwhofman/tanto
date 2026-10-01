@@ -78,24 +78,28 @@ struct FrontPanel: View {
         }
     }
 
-    // At its ideal size: the grid would otherwise squeeze a menu's column below the menu's width.
+    // At its ideal size, as the grid would otherwise squeeze a menu's column below the menu's width, and at least as wide
+    // as a knob's column.
     private func view(of cell: Cell) -> some View {
         Group {
             switch cell {
             case .button(let button):
                 LEDButton(model: model, button: button)
             case .parameter(let prm):
-                ControlView(model: model, parameter: parameter(prm))
+                ControlView(model: model, parameter: model.map.panelParameter(prm))
             case .contour:
-                ContourKnob(
-                    model: model, onOff: parameter("PRM_CONTOUR_SW"), select: parameter("PRM_CONTOUR_SELECT"))
+                ContourKnob(model: model)
             }
         }
         .fixedSize()
+        .frame(minWidth: 60)
     }
+}
 
-    private func parameter(_ prm: String) -> Parameter {
-        guard let parameter = model.map.table.parameters.first(where: { $0.prm == prm && $0.panel != nil }) else {
+extension ParameterMap {
+    /// The parameter of the front panel's control with Tone Studio id `prm`.
+    func panelParameter(_ prm: String) -> Parameter {
+        guard let parameter = table.parameters.first(where: { $0.prm == prm && $0.panel != nil }) else {
             preconditionFailure("the parameter table has no panel control \(prm)")
         }
         return parameter
@@ -129,7 +133,6 @@ private struct LEDButton: View {
                 Text(refusal).font(.caption2).foregroundStyle(.red).multilineTextAlignment(.center)
             }
         }
-        .frame(minWidth: 60)
     }
 
     private static func colour(_ button: PanelButton, _ state: Int) -> Color {

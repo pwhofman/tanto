@@ -44,7 +44,7 @@ public struct Parameter: Codable, Sendable, Hashable {
     public let section: String?
     /// Tone Studio's on-screen label, or the name from the address map.
     public let label: String
-    /// The choices of a picker, in menu order.
+    /// The choices of a picker or a menu, in menu order.
     public let options: [Option]?
     /// A label for every value from `minimum` to `maximum`, e.g. `["OFF", "ON"]`.
     public let valueLabels: [String]?
@@ -54,7 +54,10 @@ public struct Parameter: Codable, Sendable, Hashable {
     public let visibleWhen: [Condition]?
     /// How Tone Studio draws the parameter; `nil` for the patch name.
     public let control: Control?
-    /// Where Tone Studio puts the parameter on its block's page; `nil` if only the front panel shows it.
+    /// Tone Studio's page for `position`, e.g. `booster`, `modfx` (MOD and FX) or `effects-booster` (the EFFECTS page's
+    /// BOOSTER column); `nil` if only the front panel shows the parameter.
+    public let page: String?
+    /// Where Tone Studio puts the parameter on its page; `nil` if only the front panel shows it.
     public let position: Position?
     /// Where Tone Studio puts the parameter on the front panel; `nil` if the panel does not show it.
     public let panel: Position?

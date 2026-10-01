@@ -100,6 +100,11 @@ COMMAND_BUTTONS = frozenset(
         "delay2-tap-btn",
     }
 )
+# Two solo controls with generated ids, and the labels that Tone Studio puts beside them without naming them.
+_GENERATED_ID_LABELS = {
+    "id_l4nnsh87_pw3sspdwt": "id_l4nnsl0a_dn7z9rjcj",
+    "id_l4nnsnoh_pnm8d5436": "id_l4nnt69v_6jywbgm6r",
+}
 # The root of a page in `layout.div`: the front panel (`editor-panel-page`) or a block's, e.g. `editor-booster-page`.
 _PAGE_ROOT = re.compile(r"editor-[\w-]+-page")
 _PANEL_ROOT = "editor-panel-page"
@@ -158,6 +163,7 @@ class ParameterRow(TypedDict):
     louder: str | None
     written: bool
     control: str | None
+    page: str | None
     position: PositionRow | None
     panel: PositionRow | None
     kind: str
@@ -537,7 +543,10 @@ class Layout(HTMLParser):
         return [label.strip() for label in self._options.get(f"{control_id}-box", [])]
 
     def label_of(self, control_id: str) -> str | None:
-        """The text of a control's label element, named by its ``description`` attribute or by its id.
+        """The text of a control's label element.
+
+        The label named after the control, which Tone Studio puts under it, wins over the one that the ``description``
+        attribute names: some descriptions name a neighbour's label.
 
         Args:
             control_id: The control's id.
@@ -545,11 +554,15 @@ class Layout(HTMLParser):
         Returns:
             The label, or ``None`` if there is none.
         """
-        candidates = [self._attributes.get(control_id, {}).get("description", "")]
-        candidates.append(
-            re.sub(r"-(dial|knob|slider|spinner|select-box|btn|sw|selector)(-\d+)?$", r"-label\2", control_id)
-        )
+        candidates = [
+            re.sub(r"-(dial|knob|slider|spinner|select-box|btn|sw|selector)(-\d+)?$", r"-label\2", control_id),
+            self._attributes.get(control_id, {}).get("description", ""),
+            _GENERATED_ID_LABELS.get(control_id, ""),
+        ]
         for candidate in candidates:
+            # A control's own text is its value.
+            if candidate == control_id:
+                continue
             text = re.sub(r"\s+", " ", self._text.get(candidate, "")).strip()
             if text:
                 return text
@@ -652,6 +665,7 @@ def build_table(source: str) -> Table:
                 "louder": "up" if guarded else _RAMPED.get(e.prm),
                 "written": False,
                 "control": None,
+                "page": None,
                 "position": None,
                 "panel": None,
                 "kind": "numeric",
@@ -709,20 +723,28 @@ def control_of(row: ParameterRow, control_classes: set[str]) -> str | None:
     return "menu" if row["kind"] == "picker" else "knob"
 
 
-def _place(controls: list[_Control], control: str | None, on_panel: bool) -> PositionRow | None:
-    """Finds where a parameter is shown, on the front panel or on its page.
+def _place(controls: list[_Control], control: str | None, on_panel: bool) -> tuple[str, PositionRow] | None:
+    """Finds where a parameter is shown, on the front panel or on a page.
 
-    The control of the class that decided ``control`` wins over spinners and other companions.
+    The control of the class that decided ``control`` wins over spinners and other companions. A control on a block's
+    own page wins over one on the EFFECTS page, where DELAY TIME has only a hidden knob behind the TAP button.
+
+    Returns:
+        The page, e.g. ``booster`` or ``effects-booster``, and the control's position on it; ``None`` if no control is
+        placed.
     """
     preferred = next((classes for kind, classes in _CONTROL_CLASSES if kind == control), frozenset())
-    placed = [
-        c for c in controls if c.written and c.position is not None and (c.position[0] == _PANEL_ROOT) == on_panel
-    ]
-    placed.sort(key=lambda c: c.control_class not in preferred)
-    if not placed or placed[0].position is None:
+    placed: list[tuple[bool, bool, str, int, int]] = []
+    for c in controls:
+        if not c.written or c.position is None:
+            continue
+        root, x, y = c.position
+        if (root == _PANEL_ROOT) == on_panel:
+            placed.append((c.control_class not in preferred, root.startswith("editor-effects-"), root, x, y))
+    if not placed:
         return None
-    _, x, y = placed[0].position
-    return PositionRow(x=x, y=y)
+    _, _, root, x, y = min(placed, key=lambda p: p[:2])
+    return root.removeprefix("editor-").removesuffix("-page"), PositionRow(x=x, y=y)
 
 
 def _string(item: dict[str, object], key: str) -> str | None:
@@ -741,7 +763,7 @@ def _conditions(
     control_id: str,
     block: str,
     layout: Layout,
-    switchers: dict[str, tuple[str, int, list[int]]],
+    switchers: dict[str, tuple[str, int, list[int] | None]],
     blocks: dict[str, int],
 ) -> tuple[tuple[int, tuple[int, ...]], ...]:
     """Collects, from the innermost outwards, every type switch that has to match for a control to show."""
@@ -752,7 +774,8 @@ def _conditions(
         if frame is not None and frame in switchers:
             type_block, type_offset, order = switchers[frame]
             panel = layout.children(frame).index(ident)
-            values = tuple(value for value, child in enumerate(order) if child == panel)
+            # Without an order, a value shows the page of the same number.
+            values = tuple(value for value, child in enumerate(order) if child == panel) if order else (panel,)
             # Shared layouts: the type parameter lives in the block the control edits.
             target = block if type_block in ("Fx(1)", "Delay(1)") and block in ("Fx(2)", "Delay(2)") else type_block
             conditions.append((blocks[target] + type_offset, values))
@@ -773,16 +796,21 @@ def annotate(table: Table, items: dict[str, dict[str, object]], layout_text: str
         ``visibleWhen`` filled in from the controls.
 
     Raises:
-        ValueError: If the controls of a parameter disagree, or an option list does not fit its parameter.
+        ValueError: If the controls of a parameter disagree, an option list does not fit its parameter, or two items
+            switch a frame differently.
     """
     layout = Layout.parse(layout_text)
     blocks = {b["name"]: b["offset"] for b in table["blocks"]}
-    switchers: dict[str, tuple[str, int, list[int]]] = {}
+    switchers: dict[str, tuple[str, int, list[int] | None]] = {}
     for item in items.values():
         frame, pid, order = _string(item, "frame"), _string(item, "pid"), _integers(item, "order")
-        if frame and pid and order and pid.startswith("Temporary%"):
+        if frame and pid and pid.startswith("Temporary%"):
             _, type_block, type_offset = pid.split("%")
-            switchers[frame] = (type_block, int(type_offset), order)
+            switcher = (type_block, int(type_offset), order)
+            # The type menus of MOD and FX, and of DELAY and DELAY 2, switch one shared frame alike.
+            if switchers.get(frame, switcher) != switcher:
+                raise ValueError(f"items switch {frame} differently")
+            switchers[frame] = switcher
 
     controls: dict[int, list[_Control]] = defaultdict(list)
     for control_id, item in items.items():
@@ -835,8 +863,10 @@ def _merge(row: ParameterRow, controls: list[_Control]) -> ParameterRow:
     merged["label"] = next((c.label for c in controls if c.label), row["name"])
     merged["kind"] = kind_of(row, {c.control_class for c in controls if c.control_class})
     merged["control"] = control_of(merged, {c.control_class for c in controls if c.written and c.control_class})
-    merged["position"] = _place(controls, merged["control"], on_panel=False)
-    merged["panel"] = _place(controls, merged["control"], on_panel=True)
+    page = _place(controls, merged["control"], on_panel=False)
+    merged["page"], merged["position"] = page if page else (None, None)
+    panel = _place(controls, merged["control"], on_panel=True)
+    merged["panel"] = panel[1] if panel else None
     # The guard rule also reads Tone Studio's label (spec 5.2); it is the only name of some entries.
     if (
         merged["kind"] == "numeric"
@@ -851,7 +881,8 @@ def _merge(row: ParameterRow, controls: list[_Control]) -> ParameterRow:
     count = row["maximum"] - row["minimum"] + 1
     if merged["valueLabels"] is not None and len(merged["valueLabels"]) != count:
         raise ValueError(f"{row['prm']}: {len(merged['valueLabels'])} value labels for {count} values")
-    if merged["kind"] == "picker":
+    # Menus of two values count as switches but have options too.
+    if merged["kind"] == "picker" or merged["control"] == "menu":
         merged["options"] = next((c.options for c in controls if c.options), None)
         if merged["options"] is None and row["prm"] in _PICTURE_OPTIONS:
             labels = _PICTURE_OPTIONS[row["prm"]]

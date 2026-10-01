@@ -89,7 +89,9 @@ import Testing
     let map = try ParameterMap.bundled()
     let drive = try #require(map.parameter(block: "Patch_0", prm: "PRM_ODDS_DRIVE"))
     #expect(drive.control == .knob && drive.position == Parameter.Position(x: 34, y: 101) && drive.panel == nil)
+    #expect(drive.page == "booster")
     let gain = try #require(map.parameter(block: "Status", prm: "PRM_KNOB_POS_GAIN"))
-    #expect(gain.panel == Parameter.Position(x: 124, y: 88))
+    #expect(gain.panel == Parameter.Position(x: 124, y: 88) && gain.page == nil)
+    #expect(try #require(map.parameter(block: "Patch_2", prm: "PRM_FXBOX_ASGN_BOOSTER_G")).page == "effects-booster")
     #expect(try #require(map.parameter(block: "Fx(1)", prm: "PRM_FX1_GEQ_BAND1")).control == .slider)
 }

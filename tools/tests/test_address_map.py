@@ -102,6 +102,7 @@ def test_build_table_from_snippet() -> None:
         "louder": "up",
         "written": False,
         "control": None,
+        "page": None,
         "position": None,
         "panel": None,
         "kind": "numeric",

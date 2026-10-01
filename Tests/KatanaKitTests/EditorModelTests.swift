@@ -90,17 +90,23 @@ private func connectedModel() async throws -> (EditorModel, SimulatedAmp) {
 }
 
 @MainActor
-@Test func sectionsFollowTheSpecWithThePanelFirst() async throws {
+@Test func pagesFollowToneStudiosTabs() async throws {
     let model = EditorModel(map: try ParameterMap.bundled())
     #expect(
-        model.sections.map(\.id) == [
-            "amp", "booster", "mod", "fx", "delay", "delay2", "reverb", "eq1", "eq2", "pedalfx", "ns", "sendreturn",
-            "solo", "contour", "chain",
+        model.pages.map { $0.map(\.title) } == [
+            ["BOOSTER", "MOD", "FX", "DELAY", "DELAY2", "REVERB", "SOLO", "CONTOUR"],
+            ["PEDAL FX", "EQ", "EQ2", "NS", "SEND/RETURN"],
         ])
-    let booster = try #require(model.sections.first { $0.id == "booster" })
-    #expect(booster.title == "Booster")
-    #expect(booster.parameters.prefix(2).map(\.prm) == ["PRM_KNOB_POS_BOOST", "PRM_ODDS_SW"])
-    #expect(model.sections.allSatisfy { $0.parameters.allSatisfy { $0.written && $0.kind != .text } })
+    let pages = Dictionary(uniqueKeysWithValues: model.pages.joined().map { ($0.title, $0.parameters) })
+    // A page holds its block's controls; the front panel and the EFFECTS page show the others.
+    let booster = try #require(pages["BOOSTER"]).map(\.prm)
+    #expect(booster.first == "PRM_ODDS_SW" && booster.count == 9)
+    #expect(!booster.contains("PRM_KNOB_POS_BOOST") && !booster.contains("PRM_FXBOX_ASGN_BOOSTER_G"))
+    // MOD and FX share Tone Studio's page, as do DELAY and DELAY2, but each tab edits its own block.
+    #expect(try #require(pages["FX"]).allSatisfy { $0.block == "Fx(2)" })
+    #expect(try #require(pages["DELAY2"]).allSatisfy { $0.block == "Delay(2)" })
+    #expect(try #require(pages["DELAY"]).contains { $0.prm == "PRM_DLY_COMMON_DLY_TIME" })
+    #expect(pages.values.allSatisfy { $0.allSatisfy { $0.written && $0.kind != .text && $0.position != nil } })
 }
 
 @MainActor

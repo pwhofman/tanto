@@ -179,7 +179,7 @@ private struct ConnectionBadge: View {
     }
 }
 
-/// The live patch: its name, then one box per editor section.
+/// The live patch: its name, the front panel and the pages.
 private struct EditorView: View {
     let model: EditorModel
     @State private var name = ""
@@ -197,24 +197,7 @@ private struct EditorView: View {
                     }
                 }
                 FrontPanel(model: model)
-                ForEach(model.sections) { section in
-                    // The front panel shows the controls that have no place on a page.
-                    let parameters = section.parameters.filter { $0.position != nil && model.isVisible($0) }
-                    if !parameters.isEmpty {
-                        GroupBox(section.title) {
-                            LazyVGrid(
-                                columns: [GridItem(.adaptive(minimum: 96), alignment: .top)], alignment: .leading,
-                                spacing: 14
-                            ) {
-                                ForEach(parameters, id: \.offset) { parameter in
-                                    ControlView(model: model, parameter: parameter)
-                                }
-                            }
-                            .padding(6)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                    }
-                }
+                Pages(model: model)
             }
             .padding()
         }

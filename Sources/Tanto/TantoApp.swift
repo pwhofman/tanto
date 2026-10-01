@@ -5,9 +5,10 @@ import os
 
 /// Tanto: an editor for the BOSS Katana-100 MkII.
 ///
-/// Launch arguments for development: `-simulated YES` uses the simulated amp instead of MIDI, and `-snapshot FILE`
-/// (with `-simulated YES`) saves the window as a PNG after start-up and quits. They are read as user defaults because
-/// AppKit takes a plain path argument for a document to open and then opens no window.
+/// Launch arguments for development: `-simulated YES` uses the simulated amp instead of MIDI, `-snapshot FILE` (with
+/// `-simulated YES`) saves the window as a PNG after start-up and quits, and `-page TITLE` opens another page than
+/// BOOSTER. They are read as user defaults because AppKit takes a plain path argument for a document to open and then
+/// opens no window.
 @main
 struct TantoApp: App {
     @NSApplicationDelegateAdaptor private var delegate: AppDelegate

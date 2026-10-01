@@ -53,6 +53,7 @@ def row(prm: str, minimum: int = 0, maximum: int = 100, encoding: str = "int1x7"
         "louder": None,
         "written": False,
         "control": None,
+        "page": None,
         "position": None,
         "panel": None,
         "kind": "numeric",
@@ -181,9 +182,21 @@ def test_real_controls() -> None:
 
     # How Tone Studio shows a control and where: on its page, measured from the page's top left, and on the front panel.
     drive = by_key[("Patch_0", "PRM_ODDS_DRIVE")]
-    assert (drive["control"], drive["position"], drive["panel"]) == ("knob", {"x": 34, "y": 101}, None)
+    assert (drive["control"], drive["page"], drive["position"], drive["panel"]) == (
+        "knob",
+        "booster",
+        {"x": 34, "y": 101},
+        None,
+    )
     gain = by_key[("Status", "PRM_KNOB_POS_GAIN")]
-    assert (gain["control"], gain["position"], gain["panel"]) == ("knob", None, {"x": 124, "y": 88})
+    assert (gain["control"], gain["page"], gain["position"], gain["panel"]) == ("knob", None, None, {"x": 124, "y": 88})
+    # The EFFECTS page has a column per effect for the effect's colour assignments.
+    green = by_key[("Patch_2", "PRM_FXBOX_ASGN_BOOSTER_G")]
+    assert (green["section"], green["page"], green["position"]) == ("booster", "effects-booster", {"x": 20, "y": 56})
+    # DELAY TIME is the TIME dial of the DELAY page; on the EFFECTS page only a hidden knob behind TAP holds it.
+    for offset in (642, 674):
+        assert (by_offset[offset]["page"], by_offset[offset]["position"]) == ("delay", {"x": 34, "y": 101})
+    assert all((p["page"] is None) == (p["position"] is None) for p in parameters)
     assert by_key[("Patch_0", "PRM_ODDS_TYPE")]["control"] == "menu"
     assert by_key[("Patch_0", "PRM_ODDS_SW")]["control"] == "switch"
     assert by_key[("Fx(1)", "PRM_FX1_GEQ_BAND1")]["control"] == "slider"
@@ -192,10 +205,25 @@ def test_real_controls() -> None:
     assert all(p["position"] is not None or p["panel"] is not None for p in written)
     # MOD and FX share a layout, so their controls sit at the same places.
     assert by_offset[134]["position"] == by_offset[390]["position"]
+    assert by_offset[134]["page"] == by_offset[390]["page"] == "modfx"
 
     # T.WAH PEAK shows for MOD/FX type 0 only, in both the MOD (Fx(1)) and the FX (Fx(2)) block.
     assert by_offset[134]["visibleWhen"] == [{"offset": 129, "values": [0]}]
     assert (by_offset[390]["visibleWhen"], by_offset[390]["section"]) == ([{"offset": 385, "values": [0]}], "fx")
+    # Without an `order`, a value shows the page of the same number: the PEDAL FX type, the EQ type, and CONTOUR's
+    # selection inside its on/off switch.
+    assert [by_offset[o]["visibleWhen"] for o in (723, 728, 732)] == [
+        [{"offset": 721, "values": [v]}] for v in (0, 1, 2)
+    ]
+    assert [by_offset[o]["visibleWhen"] for o in (67, 77)] == [[{"offset": 65, "values": [v]}] for v in (0, 1)]
+    assert by_offset[1976]["visibleWhen"] == [{"offset": 791, "values": [1]}, {"offset": 790, "values": [1]}]
+
+    # A menu of two values has its options too.
+    assert by_offset[65]["options"] == [{"value": 0, "label": "PARAMETRIC EQ"}, {"value": 1, "label": "GE-10"}]
+    # The label under a control wins over the one its description names, which is wrong for the EQs' HIGH-MID GAIN.
+    # Two solo controls with generated ids have their labels beside them.
+    assert by_offset[73]["label"] == "HIGH-MID GAIN"
+    assert (by_offset[1936]["label"], by_offset[1937]["label"]) == ("POSITION", "SOLO EQ")
 
 
 def test_guard_rule_also_reads_tone_studio_labels() -> None:
