@@ -90,8 +90,9 @@ private func dataSets(_ amp: SimulatedAmp) -> [(Address, [UInt8])] {
         guard case .dataSet(let address, _) = IncomingMessage(received.message) else { return nil }
         return address.linear - Address.temporaryPatch.linear
     }
-    // One normal write may already be in flight; the priority write comes right after it at the latest.
-    #expect(order.prefix(2).contains(volume.offset))
+    // One normal write may already be sent and one waiting for its slot; the priority write passes all others.
+    #expect(order.prefix(3).contains(volume.offset))
+    #expect(order.last != volume.offset)
     let times = writes.map(\.time)
     for (earlier, later) in zip(times, times.dropFirst()) {
         #expect(later - earlier >= .milliseconds(20))

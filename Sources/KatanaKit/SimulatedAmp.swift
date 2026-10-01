@@ -35,6 +35,7 @@ public final class SimulatedAmp: MIDITransport {
         var received: [Received] = []
         var answersReads = true
         let identityReply: [UInt8]
+        var crossingKnobTurn: (address: Address, value: [UInt8])?
     }
 
     /// Creates a simulated amp whose nine stored patches and live patch hold the table's initial values.
@@ -78,6 +79,7 @@ public final class SimulatedAmp: MIDITransport {
     /// - Parameter message: A complete SysEx message.
     public func send(_ message: [UInt8]) throws {
         let now = ContinuousClock.now
+        var report: [UInt8]?
         let reply: [UInt8]? = state.withLock { state in
             state.received.append(Received(message: message, time: now))
             if message == SysEx.identityRequest {
@@ -94,6 +96,11 @@ public final class SimulatedAmp: MIDITransport {
                 for (index, byte) in data.enumerated() {
                     state.memory[address.linear + index] = byte
                 }
+                if let turn = state.crossingKnobTurn, turn.address == address {
+                    // The knob turn happened first on the amp, so Tanto's write wins there; its report arrives late.
+                    state.crossingKnobTurn = nil
+                    report = SysEx.dt1(address, data: turn.value, deviceID: deviceID)
+                }
                 if let volumeKnobOffset, let ampVolumeOffset,
                     address == Address.temporaryPatch.advanced(by: volumeKnobOffset), let volume = data.first
                 {
@@ -105,6 +112,19 @@ public final class SimulatedAmp: MIDITransport {
         if let reply {
             continuation.yield(reply)
         }
+        if let report {
+            continuation.yield(report)
+        }
+    }
+
+    /// Simulates a knob turn that crosses Tanto's next write to `address`: the amp applies the turn just before the
+    /// write, so the write wins, and the turn's report reaches Tanto just after the write.
+    ///
+    /// - Parameters:
+    ///   - value: The bytes the knob turn reports.
+    ///   - address: The register the knob changes.
+    public func turnKnobWhenNextWritten(_ value: [UInt8], at address: Address) {
+        state.withLock { $0.crossingKnobTurn = (address, value) }
     }
 
     /// Sends any message to Tanto as if the amp had sent it, e.g. a corrupted one.

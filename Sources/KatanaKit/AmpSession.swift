@@ -98,6 +98,9 @@ public actor AmpSession {
     private let changesContinuation: AsyncStream<AmpChange>.Continuation
     private let updatesContinuation: AsyncStream<LiveUpdate>.Continuation
     private var livePatch: [UInt8]?
+    // Per byte of the live patch: how often the amp reported a change of it, and the last byte it reported.
+    private var ampReportCounts: [Int: Int] = [:]
+    private var ampReportBytes: [Int: UInt8] = [:]
     private let transport: any MIDITransport
     private let timing: SessionTiming
     private let clock = ContinuousClock()
@@ -259,6 +262,43 @@ public actor AmpSession {
         return parameter.value(fromRaw: parameter.encoding.decode(livePatch[parameter.offset..<end]))
     }
 
+    /// How often the amp has reported a change of a parameter, and the value it reported last. A change of the count
+    /// tells `SafetyGuard` that a knob or a channel switch took over, even if a write of its own crossed the report.
+    ///
+    /// - Parameter parameter: A numeric parameter.
+    /// - Returns: The number of reports, and the last reported value if the amp reported all of its bytes.
+    func ampReports(for parameter: Parameter) -> (count: Int, value: Int?) {
+        let offsets = parameter.offset..<(parameter.offset + parameter.encoding.byteCount)
+        let count = ampReportCounts[parameter.offset, default: 0]
+        let bytes = offsets.compactMap { ampReportBytes[$0] }
+        guard parameter.encoding != .ascii16, bytes.count == offsets.count else { return (count, nil) }
+        return (count, parameter.value(fromRaw: parameter.encoding.decode(bytes)))
+    }
+
+    /// What `SafetyGuard` needs to know about a parameter, read in one step.
+    struct GuardView: Sendable {
+        /// The value in the copy of the live patch.
+        let value: Int?
+        /// How often the amp has reported a change of the parameter.
+        let reportCount: Int
+        /// The value the amp reported last.
+        let reportedValue: Int?
+    }
+
+    /// The live values and amp reports of several parameters, read in one step.
+    ///
+    /// - Parameter parameters: Numeric parameters.
+    /// - Returns: A view per parameter offset.
+    func guardViews(of parameters: [Parameter]) -> [Int: GuardView] {
+        var views: [Int: GuardView] = [:]
+        for parameter in parameters {
+            let reports = ampReports(for: parameter)
+            views[parameter.offset] = GuardView(
+                value: liveValue(of: parameter), reportCount: reports.count, reportedValue: reports.value)
+        }
+        return views
+    }
+
     /// The name in the copy of the live patch.
     ///
     /// - Returns: The name, or `nil` before `readLivePatch(_:)`.
@@ -266,7 +306,7 @@ public actor AmpSession {
         livePatch.map { PatchName.decode($0[0..<16]) }
     }
 
-    private func applyToLivePatch(_ address: Address, _ data: [UInt8]) {
+    private func applyToLivePatch(_ address: Address, _ data: [UInt8], fromAmp: Bool = false) {
         if address == .currentPatchNumber, data.count == 2 {
             let channel = ValueEncoding.int2x7.decode(data)
             currentChannel = channel
@@ -277,6 +317,12 @@ public actor AmpSession {
         guard var patch = livePatch, offset >= 0, offset < patch.count else { return }
         // The amp's dump after a channel switch runs a few bytes past the last block.
         let count = min(data.count, patch.count - offset)
+        if fromAmp {
+            for (index, byte) in data.prefix(count).enumerated() {
+                ampReportCounts[offset + index, default: 0] += 1
+                ampReportBytes[offset + index] = byte
+            }
+        }
         patch.replaceSubrange(offset..<(offset + count), with: data.prefix(count))
         livePatch = patch
         updatesContinuation.yield(.bytes(offset: offset, data: Array(data.prefix(count))))
@@ -303,7 +349,7 @@ public actor AmpSession {
                 resolve(pending, with: data)
             } else {
                 changesContinuation.yield(AmpChange(address: address, data: data))
-                applyToLivePatch(address, data)
+                applyToLivePatch(address, data, fromAmp: true)
             }
         case .malformed(let bytes):
             logger.error("dropped malformed message of \(bytes.count) bytes")
