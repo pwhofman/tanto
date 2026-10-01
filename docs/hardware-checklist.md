@@ -54,8 +54,45 @@ Further findings:
 
 ## Check 2: first writes
 
-Specified in plan 2: renaming the live patch, lowering amp VOLUME, Panic and one ramped increase, with MASTER at
-minimum; then listening to the ramp and to Panic at a MASTER level the user chooses.
+Run at the end of plan 2a. Every write goes through `SafetyGuard`, one step per run of the probe; the probe refuses to
+write without `--master-at-minimum`. Each step is announced in chat and needs the user's OK.
+
+Before starting:
+
+- Amp on and connected over USB; BOSS TONE STUDIO and other MIDI apps closed.
+- POWER CONTROL at 0.5 W and MASTER at minimum.
+- Note the current channel: at the end, switching to another channel and back restores its stored sound, because no
+  step saves anything.
+
+Steps, silent:
+
+1. `swift run TantoProbe --connect --check2 rename --master-at-minimum --log check2.probe-log.txt` writes the name
+   `TANTO TEST` into the live patch, reads it back, and restores the original name.
+2. `swift run TantoProbe --connect --check2 lower --master-at-minimum` lowers the VOLUME knob by 10. The amp volume
+   read back afterwards should equal the knob value.
+3. `swift run TantoProbe --connect --check2 panic --master-at-minimum` sets the VOLUME knob to 0; the amp volume should
+   follow to 0.
+4. `swift run TantoProbe --connect --check2 ramp --master-at-minimum --log check2-ramp.probe-log.txt` raises the
+   VOLUME knob by up to 10, at most to the ceiling. The log should show one step per message, at least 20 ms apart.
+
+Steps, audible, only with the user's OK and at a MASTER level the user chooses:
+
+5. Repeat step 4 while playing: the volume rises gradually.
+6. Repeat step 3 while playing: the sound stops.
+
+Afterwards, switch to another channel and back.
+
+### Results
+
+| Item | Result |
+|---|---|
+| Rename and restore | |
+| Lower: VOLUME knob and amp volume after | |
+| Panic: VOLUME knob and amp volume after | |
+| Ramp: steps and spacing in the log | |
+| Audible ramp | |
+| Audible Panic | |
+| Colour LED order (OFF, GREEN, RED, YELLOW) matches the amp | |
 
 ## Check 3: librarian
 
