@@ -32,7 +32,8 @@ public struct Parameter: Codable, Sendable, Hashable {
     public let initial: Int?
     /// Whether the parameter can raise loudness and falls under the safety ceiling (design spec, section 5.2).
     public let guarded: Bool
-    /// Whether a Tone Studio control writes the parameter; Tanto writes nothing else (design spec, section 3.5).
+    /// Whether a Tone Studio control writes the parameter; Tanto writes nothing else (design spec, section 3.5). The
+    /// patch name is `false` here, yet renaming writes it, as Tone Studio's WRITE dialog does.
     public let written: Bool
     /// How the parameter is edited.
     public let kind: Kind

@@ -22,12 +22,30 @@ public enum WriteError: Error, Equatable, Sendable {
     case invalidName(String)
 }
 
-/// Whether an outgoing message waits its turn or goes next.
-enum WritePriority {
+/// The lane an outgoing message waits in. A lane goes before the lanes below it; within a lane, first come, first
+/// served.
+enum WritePriority: Int, Comparable, Sendable {
     /// After everything already queued.
     case normal
-    /// Before all queued normal messages; used for decreases and Panic (design spec, section 5.2).
+    /// Before all queued normal messages; used for decreases (design spec, section 5.2).
     case high
+    /// Before everything; only Panic uses it (design spec, section 5.5).
+    case panic
+
+    static func < (lhs: WritePriority, rhs: WritePriority) -> Bool {
+        lhs.rawValue < rhs.rawValue
+    }
+}
+
+/// What a write was decided on. The session sends the write only if all of it still holds when the write's turn
+/// comes, and drops it otherwise.
+struct WriteBasis: Sendable {
+    /// The channel generation of the decision; a channel change made on the amp raises it.
+    let generation: Int
+    /// The Panic count of the decision.
+    let panics: Int
+    /// Per parameter, the number of the amp's reports about it that the decision knew of.
+    let reportCounts: [Parameter: Int]
 }
 
 /// What the amp reported while connecting.
@@ -82,34 +100,55 @@ public struct SessionTiming: Sendable {
 
 /// A conversation with the amp over a `MIDITransport`.
 ///
-/// Messages go out one at a time and at least `timing.spacing` apart. After `readLivePatch(_:)` the session keeps a
-/// copy of the live patch that follows every change the amp reports. Writing is internal to KatanaKit: the app writes
-/// through `SafetyGuard`.
+/// Messages go out one at a time and at least `timing.spacing` apart, Panic first, then decreases, then the rest. A read
+/// waits for its reply without holding up other messages; one read waits at a time. After `readLivePatch(_:)` the
+/// session keeps a copy of the live patch that follows every change the amp reports. Writing is internal to KatanaKit:
+/// the app writes through `SafetyGuard`.
 public actor AmpSession {
     /// Largest number of bytes one RQ1 asks for (Tone Studio's `SYSEX_MAXLEN`).
     public static let maxReadSize = 128
+    /// How long a reply may arrive after its read has timed out and still count as a reply.
+    static let lateReplyWindow = Duration.seconds(10)
 
     /// Changes made on the amp itself, reported while connected.
     public nonisolated let changes: AsyncStream<AmpChange>
     /// Every change of the copy of the live patch, and channel switches.
     public nonisolated let updates: AsyncStream<LiveUpdate>
+    /// Message spacing and read timeout.
+    nonisolated let timing: SessionTiming
     /// The selected channel (0 = PANEL, 1–8 = A1–B4), once read or reported by the amp.
     public private(set) var currentChannel: Int?
     private let changesContinuation: AsyncStream<AmpChange>.Continuation
     private let updatesContinuation: AsyncStream<LiveUpdate>.Continuation
     private var livePatch: [UInt8]?
-    // Per byte of the live patch: how often the amp reported a change of it, and the last byte it reported.
+    // The bytes of the patch's blocks, and those the amp has not reported since its last channel change. The copy is
+    // valid once it has been read and none is left.
+    private var blockBytes: [Range<Int>] = []
+    private var uncovered: Set<Int> = []
+    // Per byte of the live patch: how often the amp reported a change of it, the last byte it reported, and when.
     private var ampReportCounts: [Int: Int] = [:]
     private var ampReportBytes: [Int: UInt8] = [:]
+    private var ampReportTimes: [Int: ContinuousClock.Instant] = [:]
+    // Per byte of the live patch: the number of Tanto's last write to it, so that a read reply never undoes a write
+    // sent after the read.
+    private var localWrites: [Int: Int] = [:]
+    private var writeCount = 0
+    private var generation = 0
+    private var channelChangeTime: ContinuousClock.Instant?
+    private var panics = 0
+    private var editorMode = false
+    private var pendingPanic: Parameter?
     private let transport: any MIDITransport
-    private let timing: SessionTiming
     private let clock = ContinuousClock()
     private let logger = Logger(subsystem: "io.github.pwhofman.tanto", category: "midi")
     private var deviceID = SysEx.defaultDeviceID
     private var lastSend: ContinuousClock.Instant?
-    private var busy = false
-    private var waiters: [Waiter] = []
+    private var sending = false
+    private var sendWaiters: [Waiter] = []
+    private var reading = false
+    private var readWaiters: [CheckedContinuation<Void, Never>] = []
     private var pending: Pending?
+    private var outstanding: [Outstanding] = []
     private var requestCount = 0
     private var listener: Task<Void, Never>?
 
@@ -118,11 +157,25 @@ public actor AmpSession {
         case data(Address, Int)
     }
 
+    private struct Reply {
+        let data: [UInt8]
+        // Tanto's write count when the request went out.
+        let writes: Int
+    }
+
     private struct Pending {
         let id: Int
         let expected: Expected
-        let continuation: CheckedContinuation<[UInt8], any Error>
+        let continuation: CheckedContinuation<Reply, any Error>
         let timeout: Task<Void, Never>
+    }
+
+    // An RQ1 that went out and has not been answered yet; the amp answers in order.
+    private struct Outstanding {
+        let id: Int
+        let expected: Expected
+        let writes: Int
+        let time: ContinuousClock.Instant
     }
 
     private struct NoReply: Error {}
@@ -152,18 +205,26 @@ public actor AmpSession {
 
     /// Runs Tone Studio's connect sequence: identity request, editor communication level, editor mode on. Like Tone
     /// Studio, all later messages use the device ID from the identity reply, and a level other than 8 stops the
-    /// sequence before editor mode is switched on.
+    /// sequence before editor mode is switched on. A Panic asked for meanwhile goes out right after editor mode is on.
+    /// The copy of the live patch starts empty.
     ///
     /// - Returns: What the amp reported.
     /// - Throws: `AmpError` if the amp does not answer, is not a Katana MkII or uses another communication level.
     public func connect() async throws -> ConnectionInfo {
         startListening()
-        let identity = try await request(SysEx.identityRequest, expecting: .identityReply)
+        forgetLivePatch()
+        editorMode = false
+        let identity = try await request(SysEx.identityRequest, expecting: .identityReply).data
         guard SysEx.isKatanaIdentityReply(identity) else { throw AmpError.notAKatana(identity) }
         deviceID = identity[2]
         let level = try await read(.editorCommunicationLevel, size: 1)[0]
         guard level == 8 else { throw AmpError.unsupportedCommunicationLevel(level) }
         try await sendCommand(SysEx.dt1(.editorCommunicationMode, data: [1], deviceID: deviceID))
+        editorMode = true
+        if let volumeKnob = pendingPanic {
+            pendingPanic = nil
+            try await sendPanic(volumeKnob)
+        }
         return ConnectionInfo(identityReply: identity, communicationLevel: level)
     }
 
@@ -171,6 +232,7 @@ public actor AmpSession {
     ///
     /// - Throws: An error from the transport.
     public func disconnect() async throws {
+        editorMode = false
         try await sendCommand(SysEx.dt1(.editorCommunicationMode, data: [0], deviceID: deviceID))
     }
 
@@ -189,23 +251,60 @@ public actor AmpSession {
             let start = address.advanced(by: data.count)
             let count = min(Self.maxReadSize, size - data.count)
             data += try await request(
-                SysEx.rq1(start, size: count, deviceID: deviceID), expecting: .data(start, count))
+                SysEx.rq1(start, size: count, deviceID: deviceID), expecting: .data(start, count)
+            ).data
         }
         return data
     }
 
-    /// Reads the whole live patch, block by block, and keeps it as the copy that later changes apply to.
+    /// Reads the whole live patch, block by block, into the copy that later changes apply to. Each reply goes into the
+    /// copy as it arrives, except bytes Tanto wrote after asking for it, so a read never undoes a newer change.
     ///
     /// - Parameter map: The patch layout.
     /// - Throws: `AmpError.timeout` if a read gets no reply.
     public func readLivePatch(_ map: ParameterMap) async throws {
-        var patch = [UInt8](repeating: 0, count: map.patchSize)
-        for block in map.table.blocks {
-            let data = try await read(.temporaryPatch.advanced(by: block.offset), size: block.size)
-            patch.replaceSubrange(block.offset..<(block.offset + block.size), with: data)
+        if livePatch == nil {
+            livePatch = [UInt8](repeating: 0, count: map.patchSize)
+            blockBytes = map.table.blocks.map { $0.offset..<($0.offset + $0.size) }
+            uncovered = Set(blockBytes.joined())
         }
-        livePatch = patch
-        updatesContinuation.yield(.bytes(offset: 0, data: patch))
+        for block in map.table.blocks {
+            try await readIntoCopy(offset: block.offset, size: block.size)
+        }
+        if let livePatch {
+            updatesContinuation.yield(.bytes(offset: 0, data: livePatch))
+        }
+    }
+
+    /// A parameter read back from the amp, with the state of the session when the reply arrived.
+    struct Refreshed: Sendable {
+        /// The value the amp held.
+        let value: Int
+        /// How often the amp had reported a change of the parameter.
+        let reportCount: Int
+        /// The value the amp reported last.
+        let reportedValue: Int?
+        /// The channel generation.
+        let generation: Int
+        /// The Panic count.
+        let panics: Int
+    }
+
+    /// Reads one parameter from the amp into the copy, as `readLivePatch(_:)` does for the whole patch.
+    ///
+    /// - Parameter parameter: A numeric parameter.
+    /// - Returns: The value the amp held, with the state of the session when the reply arrived.
+    /// - Throws: `AmpError.timeout` if the read gets no reply.
+    func refresh(_ parameter: Parameter) async throws -> Refreshed {
+        let range = parameter.offset..<(parameter.offset + parameter.encoding.byteCount)
+        let data = try await readIntoCopy(offset: range.lowerBound, size: range.count)
+        if let livePatch {
+            updatesContinuation.yield(.bytes(offset: range.lowerBound, data: Array(livePatch[range])))
+        }
+        let reports = ampReports(for: parameter)
+        return Refreshed(
+            value: parameter.value(fromRaw: parameter.encoding.decode(data)), reportCount: reports.count,
+            reportedValue: reports.value, generation: generation, panics: panics)
     }
 
     /// Reads the selected channel.
@@ -223,9 +322,14 @@ public actor AmpSession {
     /// - Parameters:
     ///   - value: The displayed value.
     ///   - parameter: A parameter that a Tone Studio control writes.
-    ///   - priority: `.high` to go before queued messages.
+    ///   - priority: The lane to wait in.
+    ///   - basis: What the write was decided on; `nil` to send it whatever happens meanwhile.
+    /// - Returns: `false` if the write was dropped because its basis no longer held.
     /// - Throws: `WriteError` if the parameter or value is not allowed; an error from the transport.
-    func write(_ value: Int, to parameter: Parameter, priority: WritePriority = .normal) async throws {
+    @discardableResult
+    func write(_ value: Int, to parameter: Parameter, priority: WritePriority = .normal, basis: WriteBasis? = nil)
+        async throws -> Bool
+    {
         guard parameter.written, parameter.encoding != .ascii16 else { throw WriteError.notWritable(parameter.prm) }
         let raw = value + parameter.rawOffset
         let rawLimit = parameter.encoding == .int1x7 ? 128 : 16384
@@ -234,8 +338,13 @@ public actor AmpSession {
         }
         let address = Address.temporaryPatch.advanced(by: parameter.offset)
         let data = parameter.encoding.encode(raw)
-        try await sendCommand(SysEx.dt1(address, data: data, deviceID: deviceID), priority: priority)
-        applyToLivePatch(address, data)
+        guard
+            try await sendCommand(SysEx.dt1(address, data: data, deviceID: deviceID), priority: priority, basis: basis)
+        else {
+            return false
+        }
+        applyLocalWrite(address, data)
+        return true
     }
 
     /// Writes the name of the live patch, as Tone Studio's WRITE dialog does.
@@ -249,7 +358,31 @@ public actor AmpSession {
         }
         let padded = bytes + Array(repeating: 0x20, count: PatchName.length - bytes.count)
         try await sendCommand(SysEx.dt1(.temporaryPatch, data: padded, deviceID: deviceID))
-        applyToLivePatch(.temporaryPatch, padded)
+        applyLocalWrite(.temporaryPatch, padded)
+    }
+
+    /// Panic: the VOLUME knob to 0 as the next message, ahead of everything queued and of a read that waits for its
+    /// reply. No write decided before is sent afterwards. While connecting, VOLUME 0 goes out as soon as editor mode is
+    /// on (design spec, section 5.5).
+    ///
+    /// - Parameter volumeKnob: The VOLUME knob of the parameter table.
+    /// - Returns: The number of the amp's reports about VOLUME when VOLUME 0 went out, or `nil` if it waits for editor
+    ///   mode.
+    /// - Throws: An error from the transport.
+    @discardableResult
+    func panic(volumeKnob: Parameter) async throws -> Int? {
+        panics += 1
+        guard editorMode else {
+            pendingPanic = volumeKnob
+            return nil
+        }
+        try await sendPanic(volumeKnob)
+        return ampReports(for: volumeKnob).count
+    }
+
+    /// Drops every write decided so far: none of them is sent. Used when a `SafetyGuard` stops.
+    func invalidateWrites() {
+        panics += 1
     }
 
     /// The displayed value of a parameter in the copy of the live patch.
@@ -262,20 +395,25 @@ public actor AmpSession {
         return parameter.value(fromRaw: parameter.encoding.decode(livePatch[parameter.offset..<end]))
     }
 
-    /// How often the amp has reported a change of a parameter, and the value it reported last. A change of the count
-    /// tells `SafetyGuard` that a knob or a channel switch took over, even if a write of its own crossed the report.
+    /// Whether the copy of the live patch is complete: read, and after a channel change on the amp covered again by
+    /// the amp's dump of the new patch.
+    public var isLivePatchValid: Bool {
+        livePatch != nil && uncovered.isEmpty
+    }
+
+    /// How often the amp has reported a change of any byte of a parameter, and the value it reported last.
     ///
     /// - Parameter parameter: A numeric parameter.
     /// - Returns: The number of reports, and the last reported value if the amp reported all of its bytes.
     func ampReports(for parameter: Parameter) -> (count: Int, value: Int?) {
         let offsets = parameter.offset..<(parameter.offset + parameter.encoding.byteCount)
-        let count = ampReportCounts[parameter.offset, default: 0]
+        let count = offsets.reduce(0) { $0 + ampReportCounts[$1, default: 0] }
         let bytes = offsets.compactMap { ampReportBytes[$0] }
         guard parameter.encoding != .ascii16, bytes.count == offsets.count else { return (count, nil) }
         return (count, parameter.value(fromRaw: parameter.encoding.decode(bytes)))
     }
 
-    /// What `SafetyGuard` needs to know about a parameter, read in one step.
+    /// What `SafetyGuard` needs to know about a parameter.
     struct GuardView: Sendable {
         /// The value in the copy of the live patch.
         let value: Int?
@@ -283,20 +421,54 @@ public actor AmpSession {
         let reportCount: Int
         /// The value the amp reported last.
         let reportedValue: Int?
+        /// When the amp's last report about the parameter arrived.
+        let reportTime: ContinuousClock.Instant?
     }
 
-    /// The live values and amp reports of several parameters, read in one step.
+    /// What `SafetyGuard` needs to decide, read in one step.
+    struct GuardSnapshot: Sendable {
+        /// Raised by every channel change made on the amp and by connecting.
+        let generation: Int
+        /// Raised by every Panic.
+        let panics: Int
+        /// Whether the copy of the live patch is complete (`isLivePatchValid`).
+        let isValid: Bool
+        /// The selected channel.
+        let channel: Int?
+        /// When the amp reported its last channel change.
+        let channelChangeTime: ContinuousClock.Instant?
+        /// A view per parameter offset.
+        let views: [Int: GuardView]
+
+        /// The basis of a write decided on this snapshot.
+        ///
+        /// - Parameter parameters: The parameters whose amp reports the write depends on.
+        /// - Returns: The basis.
+        func basis(_ parameters: [Parameter]) -> WriteBasis {
+            WriteBasis(
+                generation: generation, panics: panics,
+                reportCounts: Dictionary(
+                    parameters.map { ($0, views[$0.offset]?.reportCount ?? 0) }, uniquingKeysWith: { first, _ in first }
+                ))
+        }
+    }
+
+    /// The state of the session and of several parameters, read in one step.
     ///
     /// - Parameter parameters: Numeric parameters.
-    /// - Returns: A view per parameter offset.
-    func guardViews(of parameters: [Parameter]) -> [Int: GuardView] {
+    /// - Returns: The snapshot.
+    func guardSnapshot(of parameters: [Parameter]) -> GuardSnapshot {
         var views: [Int: GuardView] = [:]
         for parameter in parameters {
             let reports = ampReports(for: parameter)
+            let offsets = parameter.offset..<(parameter.offset + parameter.encoding.byteCount)
             views[parameter.offset] = GuardView(
-                value: liveValue(of: parameter), reportCount: reports.count, reportedValue: reports.value)
+                value: liveValue(of: parameter), reportCount: reports.count, reportedValue: reports.value,
+                reportTime: offsets.compactMap { ampReportTimes[$0] }.max())
         }
-        return views
+        return GuardSnapshot(
+            generation: generation, panics: panics, isValid: isLivePatchValid, channel: currentChannel,
+            channelChangeTime: channelChangeTime, views: views)
     }
 
     /// The name in the copy of the live patch.
@@ -306,10 +478,72 @@ public actor AmpSession {
         livePatch.map { PatchName.decode($0[0..<16]) }
     }
 
+    // Connecting starts from scratch: no copy, no reports, and no write decided before goes out.
+    private func forgetLivePatch() {
+        livePatch = nil
+        uncovered = []
+        ampReportCounts = [:]
+        ampReportBytes = [:]
+        ampReportTimes = [:]
+        localWrites = [:]
+        generation += 1
+        channelChangeTime = nil
+    }
+
+    private func sendPanic(_ volumeKnob: Parameter) async throws {
+        let address = Address.temporaryPatch.advanced(by: volumeKnob.offset)
+        let data = volumeKnob.encoding.encode(volumeKnob.rawOffset)
+        try await sendCommand(SysEx.dt1(address, data: data, deviceID: deviceID), priority: .panic)
+        applyLocalWrite(address, data)
+    }
+
+    // Reads part of the live patch into the copy, as `readLivePatch(_:)` describes.
+    @discardableResult
+    private func readIntoCopy(offset: Int, size: Int) async throws -> [UInt8] {
+        var data: [UInt8] = []
+        while data.count < size {
+            let start = offset + data.count
+            let count = min(Self.maxReadSize, size - data.count)
+            let address = Address.temporaryPatch.advanced(by: start)
+            let reply = try await request(
+                SysEx.rq1(address, size: count, deviceID: deviceID), expecting: .data(address, count))
+            applyReadReply(at: start, reply.data, writesBefore: reply.writes)
+            data += reply.data
+        }
+        return data
+    }
+
+    private func applyReadReply(at offset: Int, _ data: [UInt8], writesBefore writes: Int) {
+        guard var patch = livePatch, offset >= 0 else { return }
+        for (index, byte) in data.enumerated() where offset + index < patch.count {
+            let position = offset + index
+            uncovered.remove(position)
+            if localWrites[position, default: 0] <= writes {
+                patch[position] = byte
+            }
+        }
+        livePatch = patch
+    }
+
+    private func applyLocalWrite(_ address: Address, _ data: [UInt8]) {
+        writeCount += 1
+        let offset = address.linear - Address.temporaryPatch.linear
+        for index in data.indices {
+            localWrites[offset + index] = writeCount
+        }
+        applyToLivePatch(address, data)
+    }
+
     private func applyToLivePatch(_ address: Address, _ data: [UInt8], fromAmp: Bool = false) {
         if address == .currentPatchNumber, data.count == 2 {
             let channel = ValueEncoding.int2x7.decode(data)
             currentChannel = channel
+            if fromAmp {
+                // The amp loaded another patch: the copy is stale until the amp's dump has covered it.
+                generation += 1
+                channelChangeTime = clock.now
+                uncovered = Set(blockBytes.joined())
+            }
             updatesContinuation.yield(.channel(channel))
             return
         }
@@ -318,9 +552,12 @@ public actor AmpSession {
         // The amp's dump after a channel switch runs a few bytes past the last block.
         let count = min(data.count, patch.count - offset)
         if fromAmp {
+            let now = clock.now
             for (index, byte) in data.prefix(count).enumerated() {
                 ampReportCounts[offset + index, default: 0] += 1
                 ampReportBytes[offset + index] = byte
+                ampReportTimes[offset + index] = now
+                uncovered.remove(offset + index)
             }
         }
         patch.replaceSubrange(offset..<(offset + count), with: data.prefix(count))
@@ -342,11 +579,21 @@ public actor AmpSession {
         switch IncomingMessage(message) {
         case .identityReply(let reply):
             if let pending, pending.expected == .identityReply {
-                resolve(pending, with: reply)
+                resolve(pending, with: Reply(data: reply, writes: writeCount))
             }
         case .dataSet(let address, let data):
-            if let pending, pending.expected == .data(address, data.count) {
-                resolve(pending, with: data)
+            outstanding.removeAll { clock.now - $0.time > Self.lateReplyWindow }
+            if let index = outstanding.firstIndex(where: { $0.expected == .data(address, data.count) }) {
+                // A reply. The amp answers in order, so requests before this one went unanswered.
+                let request = outstanding[index]
+                outstanding.removeFirst(index + 1)
+                if let pending, pending.expected == request.expected {
+                    resolve(pending, with: Reply(data: data, writes: request.writes))
+                } else {
+                    logger.notice("late reply for \(address, privacy: .public); kept as a read, not as a change")
+                    applyReadReply(
+                        at: address.linear - Address.temporaryPatch.linear, data, writesBefore: request.writes)
+                }
             } else {
                 changesContinuation.yield(AmpChange(address: address, data: data))
                 applyToLivePatch(address, data, fromAmp: true)
@@ -358,13 +605,13 @@ public actor AmpSession {
         }
     }
 
-    private func resolve(_ pending: Pending, with data: [UInt8]) {
+    private func resolve(_ pending: Pending, with reply: Reply) {
         self.pending = nil
         pending.timeout.cancel()
-        pending.continuation.resume(returning: data)
+        pending.continuation.resume(returning: reply)
     }
 
-    private func request(_ message: [UInt8], expecting expected: Expected) async throws -> [UInt8] {
+    private func request(_ message: [UInt8], expecting expected: Expected) async throws -> Reply {
         do {
             return try await requestOnce(message, expecting: expected)
         } catch is NoReply {
@@ -380,26 +627,42 @@ public actor AmpSession {
         }
     }
 
-    private func requestOnce(_ message: [UInt8], expecting expected: Expected) async throws -> [UInt8] {
-        await acquire()
-        defer { release() }
-        try await waitForSlot()
+    // One read waits for its reply at a time. It holds the send slot only while its request goes out, so Panic and
+    // writes do not wait for the reply.
+    private func requestOnce(_ message: [UInt8], expecting expected: Expected) async throws -> Reply {
+        await acquireRead()
+        defer { releaseRead() }
+        await acquireSend(.normal)
+        do {
+            try await waitForSlot()
+        } catch {
+            releaseSend()
+            throw error
+        }
         requestCount += 1
         let id = requestCount
         return try await withCheckedThrowingContinuation { continuation in
             let timeout = Task { [clock, readTimeout = timing.readTimeout] in
-                try? await clock.sleep(for: readTimeout)
+                do {
+                    try await clock.sleep(for: readTimeout)
+                } catch {
+                    return  // cancelled: the reply arrived
+                }
                 self.expire(id)
             }
             pending = Pending(id: id, expected: expected, continuation: continuation, timeout: timeout)
             do {
                 try transport.send(message)
                 lastSend = clock.now
+                if case .data = expected {
+                    outstanding.append(Outstanding(id: id, expected: expected, writes: writeCount, time: clock.now))
+                }
             } catch {
                 pending = nil
                 timeout.cancel()
                 continuation.resume(throwing: error)
             }
+            releaseSend()
         }
     }
 
@@ -409,12 +672,26 @@ public actor AmpSession {
         pending.continuation.resume(throwing: NoReply())
     }
 
-    private func sendCommand(_ message: [UInt8], priority: WritePriority = .normal) async throws {
-        await acquire(priority)
-        defer { release() }
+    @discardableResult
+    private func sendCommand(_ message: [UInt8], priority: WritePriority = .normal, basis: WriteBasis? = nil)
+        async throws -> Bool
+    {
+        await acquireSend(priority)
+        defer { releaseSend() }
         try await waitForSlot()
+        // No message from the amp can be handled between this check and the send: both run on this actor without a
+        // pause.
+        if let basis, !holds(basis) {
+            return false
+        }
         try transport.send(message)
         lastSend = clock.now
+        return true
+    }
+
+    private func holds(_ basis: WriteBasis) -> Bool {
+        basis.generation == generation && basis.panics == panics
+            && basis.reportCounts.allSatisfy { ampReports(for: $0.key).count == $0.value }
     }
 
     private func waitForSlot() async throws {
@@ -423,28 +700,40 @@ public actor AmpSession {
         }
     }
 
-    // One message is in flight at a time. Waiters are served first come, first served, except that high-priority
-    // waiters go before all normal ones.
-    private func acquire(_ priority: WritePriority = .normal) async {
-        if !busy {
-            busy = true
+    private func acquireSend(_ priority: WritePriority) async {
+        if !sending {
+            sending = true
             return
         }
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            let waiter = Waiter(priority: priority, continuation: continuation)
-            if priority == .high, let firstNormal = waiters.firstIndex(where: { $0.priority == .normal }) {
-                waiters.insert(waiter, at: firstNormal)
-            } else {
-                waiters.append(waiter)
-            }
+            let index = sendWaiters.firstIndex { $0.priority < priority } ?? sendWaiters.endIndex
+            sendWaiters.insert(Waiter(priority: priority, continuation: continuation), at: index)
         }
     }
 
-    private func release() {
-        if waiters.isEmpty {
-            busy = false
+    private func releaseSend() {
+        if sendWaiters.isEmpty {
+            sending = false
         } else {
-            waiters.removeFirst().continuation.resume()
+            sendWaiters.removeFirst().continuation.resume()
+        }
+    }
+
+    private func acquireRead() async {
+        if !reading {
+            reading = true
+            return
+        }
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            readWaiters.append(continuation)
+        }
+    }
+
+    private func releaseRead() {
+        if readWaiters.isEmpty {
+            reading = false
+        } else {
+            readWaiters.removeFirst().resume()
         }
     }
 }

@@ -57,6 +57,8 @@ public final class EditorModel {
     public private(set) var nameRefusal: String?
     /// The ceiling as a percentage of a guarded parameter's travel.
     public private(set) var ceilingPercent = 50
+    /// How often Panic was pressed; a slider ignores the rest of a drag that a Panic interrupted.
+    public private(set) var panicCount = 0
 
     @ObservationIgnored private var session: AmpSession?
     @ObservationIgnored private var safety: SafetyGuard?
@@ -81,12 +83,19 @@ public final class EditorModel {
     }
 
     /// Connects: Tone Studio's connect sequence, then the current channel, the channel names and the live patch.
-    /// Nothing is written apart from the editor-mode flag.
+    /// Nothing is written apart from the editor-mode flag, and VOLUME 0 if Panic is pressed meanwhile.
+    ///
+    /// - Parameter transport: The connection to the amp.
+    public func connect(_ transport: any MIDITransport) async {
+        await connect(transport, timing: .katana)
+    }
+
+    /// `connect(_:)` with another timing, for tests.
     ///
     /// - Parameters:
     ///   - transport: The connection to the amp.
     ///   - timing: Message spacing and read timeout.
-    public func connect(_ transport: any MIDITransport, timing: SessionTiming = .katana) async {
+    func connect(_ transport: any MIDITransport, timing: SessionTiming) async {
         await disconnect()
         connection = .connecting
         let session = AmpSession(transport: transport, timing: timing)
@@ -106,7 +115,8 @@ public final class EditorModel {
             channelNames = names
             try await session.readLivePatch(map)
             liveName = await session.liveName() ?? ""
-            safety = try SafetyGuard(session: session, map: map, ceilingPercent: ceilingPercent)
+            safety = try SafetyGuard(
+                session: session, map: map, ceilingPercent: ceilingPercent, rampDuration: .seconds(2))
             connection = .connected
         } catch {
             connection = .failed(Self.message(for: error))
@@ -117,12 +127,18 @@ public final class EditorModel {
     /// times when the amp does not answer yet, and forgets the connection without sending anything when the port
     /// disappears (design spec, section 8). Runs until the calling task is cancelled.
     ///
+    /// - Parameter ports: Where the amp appears.
+    public func follow(_ ports: any AmpPorts) async {
+        await follow(ports, timing: .katana, retryDelay: .seconds(2))
+    }
+
+    /// `follow(_:)` with another timing and retry delay, for tests.
+    ///
     /// - Parameters:
     ///   - ports: Where the amp appears.
     ///   - timing: Message spacing and read timeout.
     ///   - retryDelay: The wait before another try after a failed connect.
-    public func follow(_ ports: any AmpPorts, timing: SessionTiming = .katana, retryDelay: Duration = .seconds(2)) async
-    {
+    func follow(_ ports: any AmpPorts, timing: SessionTiming, retryDelay: Duration) async {
         await refresh(ports, timing: timing, retryDelay: retryDelay)
         for await _ in ports.changes {
             retries = 0
@@ -135,7 +151,7 @@ public final class EditorModel {
         guard !Task.isCancelled else { return }
         guard ports.isPresent else {
             if connection != .notConnected {
-                forget()
+                await forget()
             }
             return
         }
@@ -165,7 +181,8 @@ public final class EditorModel {
     }
 
     // The amp is gone: drop the connection without sending anything.
-    private func forget() {
+    private func forget() async {
+        await safety?.stop()
         updatesTask?.cancel()
         updatesTask = nil
         retryTask?.cancel()
@@ -174,8 +191,9 @@ public final class EditorModel {
         connection = .notConnected
     }
 
-    /// Switches editor mode off, if the amp is still there, and forgets the connection.
+    /// Stops the guard, switches editor mode off if the amp is still there, and forgets the connection.
     public func disconnect() async {
+        await safety?.stop()
         updatesTask?.cancel()
         updatesTask = nil
         if let session {
@@ -199,7 +217,9 @@ public final class EditorModel {
         guard let session else { return }
         let done = DispatchSemaphore(value: 0)
         let logger = logger
+        let safety = safety
         Task.detached {
+            await safety?.stop()
             do {
                 try await session.disconnect()
             } catch {
@@ -254,9 +274,19 @@ public final class EditorModel {
         }
     }
 
-    /// Panic: the VOLUME knob to 0 as the next message (design spec, section 5.5).
+    /// Panic: the VOLUME knob to 0 as the next message (design spec, section 5.5). While connecting, VOLUME 0 goes out
+    /// as soon as the amp is in editor mode.
     public func panic() async {
-        await safety?.panic()
+        panicCount += 1
+        if let safety {
+            await safety.panic()
+        } else if let session, let volumeKnob = map.parameter(block: "Status", prm: "PRM_KNOB_POS_VOLUME") {
+            do {
+                try await session.panic(volumeKnob: volumeKnob)
+            } catch {
+                logger.error("Panic not sent: \(error)")
+            }
+        }
     }
 
     /// Renames the live patch.
@@ -318,9 +348,12 @@ public final class EditorModel {
             switch error {
             case .aboveCeiling(_, _, let ceiling): "Above the ceiling of \(ceiling)"
             case .volumeAboveCeiling(_, let ceiling): "Lower VOLUME to \(ceiling) or less first"
-            case .notReady: "Not connected yet"
+            case .notReady: "The amp is not ready yet"
+            case .overtakenByPanic: "Cancelled by Panic"
             case .invalidCeiling(let percent): "\(percent) % is not a valid ceiling"
-            case .notWritable, .outOfRange, .missingVolumeKnob: "Not allowed"
+            case .notWritable, .outOfRange: "Not allowed"
+            case .invalidTable(let reason): "The parameter table is invalid: \(reason)"
+            case .invalidTiming: "The connection is paced faster than Tone Studio's 20 ms"
             }
         case let error as WriteError:
             switch error {

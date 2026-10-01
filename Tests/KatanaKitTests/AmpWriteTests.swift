@@ -83,7 +83,7 @@ private func dataSets(_ amp: SimulatedAmp) -> [(Address, [UInt8])] {
     try await Task.sleep(for: .milliseconds(5))
     try await session.write(0, to: volume, priority: .high)
     for task in normal {
-        try await task.value
+        _ = try await task.value
     }
     let writes = amp.received.dropFirst(before)
     let order = writes.compactMap { received -> Int? in

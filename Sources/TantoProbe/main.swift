@@ -129,7 +129,7 @@ func runCheck2(_ step: String, session: AmpSession, map: ParameterMap) async thr
     guard let knob = map.parameter(block: "Status", prm: "PRM_KNOB_POS_VOLUME"),
         let ampVolume = map.parameter(block: "Patch_0", prm: "PRM_PREAMP_A_LEVEL")
     else {
-        throw SafetyError.missingVolumeKnob
+        throw SafetyError.invalidTable("no VOLUME knob or amp volume")
     }
     try await session.readLivePatch(map)
     let safety = try SafetyGuard(session: session, map: map)
@@ -143,6 +143,14 @@ func runCheck2(_ step: String, session: AmpSession, map: ParameterMap) async thr
             "\(moment): VOLUME knob \(knobValue), amp volume \(ampValue), ceiling \(await safety.ceiling(of: knob) ?? -1)"
         )
     }
+    // Whatever the amp sends by itself during the step. An echo of Tanto's own writes would show up here, and would
+    // look like a knob turn to the guard (plan 2c, m9).
+    let listener = Task {
+        for await change in session.changes {
+            print("amp   " + describe(change.address, change.data, map: map))
+        }
+    }
+    defer { listener.cancel() }
     try await report("before")
     switch step {
     case "rename":

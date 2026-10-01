@@ -1,3 +1,4 @@
+import Synchronization
 import Testing
 
 @testable import KatanaKit
@@ -120,4 +121,161 @@ func randomRequestsKeepTheSafetyRules(seed: UInt64) async throws {
     #expect(switchChanges > 10, "\(switchChanges) switch changes")
     #expect(rampSteps > 50, "\(rampSteps) ramp steps")
     #expect(panics.count > 5, "\(panics.count) panics")
+}
+
+/// Collects messages from a `@Sendable` hook.
+private final class Messages: Sendable {
+    private let items = Mutex<[String]>([])
+
+    func append(_ item: String) {
+        items.withLock { $0.append(item) }
+    }
+
+    var all: [String] { items.withLock { $0 } }
+}
+
+// Random requests while knobs are turned and channels are switched on the amp. Every write is checked when it goes out,
+// against what the session knew at that moment: guarded values rise one step at a time, not faster than the ramp and
+// not above the ceiling unless they fall; switch and picker changes go out only while VOLUME is 0; and while the copy
+// of the live patch is incomplete only VOLUME 0 goes out. In the end no guarded value is above both its ceiling and the
+// highest value the amp itself set (design spec, sections 5.2, 5.3 and 5.8).
+@Test(arguments: [4, 5, 6] as [UInt64])
+func randomRequestsWithChangesOnTheAmpKeepTheSafetyRules(seed: UInt64) async throws {
+    let map = try ParameterMap.bundled()
+    let amp = SimulatedAmp(map: map)
+    let volume = try #require(map.parameter(block: "Status", prm: "PRM_KNOB_POS_VOLUME"))
+    var random = SplitMix64(state: seed)
+    amp.setMemory([20], at: .temporaryPatch.advanced(by: volume.offset))
+    for slot in 0...8 {
+        let stored = UInt8([5, 20, 40, 88].randomElement(using: &random) ?? 20)
+        amp.setMemory([stored], at: Address.userPatch(slot).advanced(by: volume.offset))
+    }
+    let transport = HookTransport(amp: amp)
+    let session = AmpSession(
+        transport: transport, timing: SessionTiming(spacing: .milliseconds(1), readTimeout: .seconds(1)))
+    _ = try await session.connect()
+    try await session.readLivePatch(map)
+    let rampDuration = Duration.milliseconds(200)
+    let safety = try SafetyGuard(session: session, map: map, rampDuration: rampDuration)
+
+    let violations = Messages()
+    let kinds = Messages()
+    let lastWrite = Mutex<[Int: ContinuousClock.Instant]>([:])
+    transport.setHook { message in
+        guard case .dataSet(let address, let data) = IncomingMessage(message),
+            let parameter = map.parameter(atOffset: address.linear - Address.temporaryPatch.linear),
+            parameter.encoding != .ascii16
+        else { return }
+        let new = parameter.value(fromRaw: parameter.encoding.decode(data))
+        // The hook runs inside the session's send, on its actor.
+        let (known, knownVolume, valid) = session.assumeIsolated { session in
+            (session.liveValue(of: parameter), session.liveValue(of: volume), session.isLivePatchValid)
+        }
+        let now = ContinuousClock.now
+        let previous = lastWrite.withLock { times in
+            defer { times[parameter.offset] = now }
+            return times[parameter.offset]
+        }
+        if !valid, !(parameter == volume && new == 0) {
+            violations.append("\(parameter.prm) = \(new) while the copy was incomplete")
+        }
+        if parameter.guarded, parameter.kind == .numeric, let known, new > known {
+            kinds.append("rise")
+            let ceiling = Ceiling.value(of: parameter, percent: 50) ?? parameter.maximum
+            if new > known + 1 { violations.append("\(parameter.prm) jumped from \(known) to \(new)") }
+            if new > ceiling { violations.append("\(parameter.prm) rose to \(new), above its ceiling \(ceiling)") }
+            if let previous, now - previous < rampDuration / (parameter.maximum - parameter.minimum) {
+                violations.append("\(parameter.prm) rose too fast")
+            }
+        }
+        if parameter.kind == .toggle || parameter.kind == .picker {
+            kinds.append("switch")
+            if knownVolume != 0 { violations.append("\(parameter.prm) switched while VOLUME was \(knownVolume ?? -1)") }
+        }
+    }
+
+    // The highest value the amp itself has set for each guarded parameter.
+    var ampHighest: [Int: Int] = [:]
+    func noteAmpValues(_ bytes: [UInt8]) {
+        for value in map.values(in: bytes, at: 0) where value.parameter.guarded {
+            ampHighest[value.parameter.offset] = max(ampHighest[value.parameter.offset] ?? value.value, value.value)
+        }
+    }
+    noteAmpValues(amp.memory(at: .temporaryPatch, count: map.patchSize))
+    func waitUntil(_ condition: () async -> Bool) async throws {
+        for _ in 0..<2000 where !(await condition()) {
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        #expect(await condition(), "the session did not take in a change on the amp")
+    }
+
+    let candidates = map.table.parameters.filter { $0.written && $0.kind != .text }
+    let knobs = map.table.parameters.filter { $0.block == "Status" && $0.written && $0.kind == .numeric }
+    var knobTurns = 0
+    var channelSwitches = 0
+    var panics = 0
+    for step in 0..<1000 {
+        if step % 50 == 49 {
+            await safety.settle()
+        }
+        let roll = Int.random(in: 0..<100, using: &random)
+        if roll < 2 {
+            panics += 1
+            await safety.panic()
+            #expect(
+                amp.memory(at: .temporaryPatch.advanced(by: volume.offset), count: 1) == [0], "Panic left VOLUME up")
+        } else if roll < 10 {
+            // A knob turned on the amp.
+            let knob = knobs.randomElement(using: &random) ?? volume
+            let value = Int.random(in: knob.minimum...knob.maximum, using: &random)
+            let before = await session.ampReports(for: knob).count
+            amp.changeOnAmp(
+                knob.encoding.encode(value + knob.rawOffset), at: .temporaryPatch.advanced(by: knob.offset))
+            knobTurns += 1
+            if knob.guarded {
+                ampHighest[knob.offset] = max(ampHighest[knob.offset] ?? value, value)
+            }
+            try await waitUntil { await session.ampReports(for: knob).count > before }
+        } else if roll < 12 {
+            // A channel button pressed on the amp.
+            let slot = Int.random(in: 0...8, using: &random)
+            noteAmpValues(amp.memory(at: .userPatch(slot), count: map.patchSize))
+            amp.switchChannelOnAmp(slot)
+            channelSwitches += 1
+            try await waitUntil {
+                let channel = await session.currentChannel
+                let valid = await session.isLivePatchValid
+                return channel == slot && valid
+            }
+        } else {
+            let parameter = roll < 35 ? volume : candidates.randomElement(using: &random) ?? volume
+            var value =
+                parameter.options?.randomElement(using: &random)?.value
+                ?? Int.random(in: parameter.minimum...parameter.maximum, using: &random)
+            if parameter.guarded, Bool.random(using: &random), let current = await session.liveValue(of: parameter),
+                let ceiling = await safety.ceiling(of: parameter), current < ceiling
+            {
+                value = min(current + Int.random(in: 1...8, using: &random), ceiling)
+            }
+            _ = try? await safety.set(parameter, to: value)
+        }
+        if roll % 3 == 0 {
+            try await Task.sleep(for: .milliseconds(Int.random(in: 0...4, using: &random)))
+        }
+    }
+    await safety.settle()
+
+    let live = amp.memory(at: .temporaryPatch, count: map.patchSize)
+    for value in map.values(in: live, at: 0) where value.parameter.guarded && value.parameter.written {
+        let ceiling = Ceiling.value(of: value.parameter, percent: 50) ?? value.parameter.maximum
+        let allowed = max(ceiling, ampHighest[value.parameter.offset] ?? ceiling)
+        #expect(value.value <= allowed, "\(value.parameter.prm) ended at \(value.value), above \(allowed)")
+    }
+    #expect(violations.all.isEmpty, "\(violations.all.prefix(10))")
+    // The run must have exercised what it checks.
+    let statistics = await safety.statistics
+    #expect(knobTurns > 30 && channelSwitches > 5 && panics > 5)
+    #expect(kinds.all.filter { $0 == "rise" }.count > 50, "\(kinds.all.filter { $0 == "rise" }.count) rises")
+    #expect(kinds.all.filter { $0 == "switch" }.count > 10, "\(kinds.all.filter { $0 == "switch" }.count) switches")
+    #expect(statistics["stopped: amp report", default: 0] > 0, "\(statistics)")
 }
