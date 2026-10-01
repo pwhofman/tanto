@@ -218,8 +218,12 @@ def test_real_controls() -> None:
     assert [by_offset[o]["visibleWhen"] for o in (67, 77)] == [[{"offset": 65, "values": [v]}] for v in (0, 1)]
     assert by_offset[1976]["visibleWhen"] == [{"offset": 791, "values": [1]}, {"offset": 790, "values": [1]}]
 
-    # A menu of two values has its options too.
+    # A menu of two values has its options too, and so do radio buttons: the CHAIN patterns.
     assert by_offset[65]["options"] == [{"value": 0, "label": "PARAMETRIC EQ"}, {"value": 1, "label": "GE-10"}]
+    chains = ["CHAIN1", "CHAIN2-1", "CHAIN3-1", "CHAIN4-1", "CHAIN2-2", "CHAIN3-2", "CHAIN4-2"]
+    assert by_key[("Patch_2", "PRM_CHAIN_PTN")]["options"] == [{"value": v, "label": c} for v, c in enumerate(chains)]
+    # CONTOUR's hidden radio button on its page has no options to give.
+    assert by_key[("Patch_1", "PRM_CONTOUR_SELECT")]["options"] is None
     # The label under a control wins over the one its description names, which is wrong for the EQs' HIGH-MID GAIN.
     # Two solo controls with generated ids have their labels beside them.
     assert by_offset[73]["label"] == "HIGH-MID GAIN"

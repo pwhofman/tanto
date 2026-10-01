@@ -94,10 +94,14 @@ private func connectedModel() async throws -> (EditorModel, SimulatedAmp) {
     let model = EditorModel(map: try ParameterMap.bundled())
     #expect(
         model.pages.map { $0.map(\.title) } == [
-            ["BOOSTER", "MOD", "FX", "DELAY", "DELAY2", "REVERB", "SOLO", "CONTOUR"],
+            ["EFFECTS", "CHAIN"], ["BOOSTER", "MOD", "FX", "DELAY", "DELAY2", "REVERB", "SOLO", "CONTOUR"],
             ["PEDAL FX", "EQ", "EQ2", "NS", "SEND/RETURN"],
         ])
     let pages = Dictionary(uniqueKeysWithValues: model.pages.joined().map { ($0.title, $0.parameters) })
+    // EFFECTS holds every effect's GREEN, RED and YELLOW assignment; CHAIN the order of the blocks.
+    let effects = try #require(pages["EFFECTS"])
+    #expect(effects.count == 21 && effects.allSatisfy { $0.control == .menu && $0.page?.hasPrefix("effects-") == true })
+    #expect(try #require(pages["CHAIN"]).map(\.prm) == ["PRM_CHAIN_PTN"])
     // A page holds its block's controls; the front panel and the EFFECTS page show the others.
     let booster = try #require(pages["BOOSTER"]).map(\.prm)
     #expect(booster.first == "PRM_ODDS_SW" && booster.count == 9)

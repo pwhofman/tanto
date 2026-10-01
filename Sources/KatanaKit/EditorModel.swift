@@ -32,17 +32,21 @@ public final class EditorModel {
         public var id: String { title }
     }
 
-    // Tone Studio's tabs in its groups, each with the section of its parameters and Tone Studio's page for them. MOD and
-    // FX share a page, as do DELAY and DELAY2. The EFFECTS, CHAIN and ASSIGN tabs are not here yet.
-    private static let pageSources = [
+    // Tone Studio's tabs in its groups, each with the section of its parameters (any for EFFECTS) and Tone Studio's
+    // pages for them. MOD and FX share a page, as do DELAY and DELAY2. ASSIGN is left out.
+    private static let pageSources: [[(title: String, section: String?, pages: [String])]] = [
         [
-            ("BOOSTER", "booster", "booster"), ("MOD", "mod", "modfx"), ("FX", "fx", "modfx"),
-            ("DELAY", "delay", "delay"), ("DELAY2", "delay2", "delay"), ("REVERB", "reverb", "reverb"),
-            ("SOLO", "solo", "solo"), ("CONTOUR", "contour", "contour"),
+            ("EFFECTS", nil, ["effects-booster", "effects-mod", "effects-fx", "effects-delay", "effects-reverb"]),
+            ("CHAIN", "chain", ["chain-content"]),
         ],
         [
-            ("PEDAL FX", "pedalfx", "pedalfx"), ("EQ", "eq1", "eq"), ("EQ2", "eq2", "eq2"), ("NS", "ns", "ns"),
-            ("SEND/RETURN", "sendreturn", "sr"),
+            ("BOOSTER", "booster", ["booster"]), ("MOD", "mod", ["modfx"]), ("FX", "fx", ["modfx"]),
+            ("DELAY", "delay", ["delay"]), ("DELAY2", "delay2", ["delay"]), ("REVERB", "reverb", ["reverb"]),
+            ("SOLO", "solo", ["solo"]), ("CONTOUR", "contour", ["contour"]),
+        ],
+        [
+            ("PEDAL FX", "pedalfx", ["pedalfx"]), ("EQ", "eq1", ["eq"]), ("EQ2", "eq2", ["eq2"]), ("NS", "ns", ["ns"]),
+            ("SEND/RETURN", "sendreturn", ["sr"]),
         ],
     ]
 
@@ -108,11 +112,12 @@ public final class EditorModel {
     public init(map: ParameterMap) {
         self.map = map
         pages = Self.pageSources.map { group in
-            group.map { title, section, page in
+            group.map { title, section, pages in
                 Page(
                     title: title,
-                    parameters: map.table.parameters.filter {
-                        $0.section == section && $0.page == page && $0.written && $0.kind != .text
+                    parameters: map.table.parameters.filter { parameter in
+                        (section == nil || parameter.section == section) && parameter.page.map(pages.contains) == true
+                            && parameter.written && parameter.kind != .text
                     })
             }
         }

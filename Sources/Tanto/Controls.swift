@@ -7,6 +7,8 @@ import SwiftUI
 struct ControlView: View {
     let model: EditorModel
     let parameter: Parameter
+    /// Whether a switch or a menu shows Tone Studio's label below it; a knob always does.
+    var showsLabel = true
 
     var body: some View {
         VStack(spacing: 3) {
@@ -16,11 +18,11 @@ struct ControlView: View {
             case .slider:
                 KnobView(model: model, parameter: parameter, vertical: true)
             case .switch:
-                SwitchView(model: model, parameter: parameter)
+                SwitchView(model: model, parameter: parameter, showsLabel: showsLabel)
             case .menu:
-                MenuView(model: model, parameter: parameter, segmented: false)
+                MenuView(model: model, parameter: parameter, segmented: false, showsLabel: showsLabel)
             case .segmented:
-                MenuView(model: model, parameter: parameter, segmented: true)
+                MenuView(model: model, parameter: parameter, segmented: true, showsLabel: showsLabel)
             }
             if let refusal = model.refusals[parameter.offset] {
                 Text(refusal).font(.caption2).foregroundStyle(.red).multilineTextAlignment(.center)
@@ -233,10 +235,11 @@ private struct Arc: Shape {
     }
 }
 
-/// An on/off switch with its label below.
+/// An on/off switch, with its label below unless that is left out.
 private struct SwitchView: View {
     let model: EditorModel
     let parameter: Parameter
+    let showsLabel: Bool
 
     var body: some View {
         let value = model.value(of: parameter) ?? parameter.minimum
@@ -249,16 +252,19 @@ private struct SwitchView: View {
             )
             .toggleStyle(.switch)
             .labelsHidden()
-            Text(parameter.label).font(.caption).foregroundStyle(.secondary)
+            if showsLabel {
+                Text(parameter.label).font(.caption).foregroundStyle(.secondary)
+            }
         }
     }
 }
 
-/// A pop-up menu, or a segmented control, with its label below.
+/// A pop-up menu or a segmented control, with its label below unless that is left out.
 private struct MenuView: View {
     let model: EditorModel
     let parameter: Parameter
     let segmented: Bool
+    let showsLabel: Bool
 
     var body: some View {
         let value = model.value(of: parameter) ?? parameter.minimum
@@ -280,7 +286,9 @@ private struct MenuView: View {
             } else {
                 picker.pickerStyle(.menu).fixedSize()
             }
-            Text(parameter.label).font(.caption).foregroundStyle(.secondary)
+            if showsLabel {
+                Text(parameter.label).font(.caption).foregroundStyle(.secondary)
+            }
         }
     }
 }

@@ -455,7 +455,9 @@ class Layout(HTMLParser):
             self._parent[ident] = owner
             self._children[owner].append(ident)
             self._attributes[ident] = attributes
-        if tag == "a" and "elf-select-box-option-control" in attributes.get("class", "") and owner is not None:
+        # A select box's options are links in its popup, a radio button group's are labels in the group.
+        option_class = {"a": "elf-select-box-option-control", "label": "elf-radio-button-item"}.get(tag)
+        if option_class and option_class in attributes.get("class", "").split() and owner is not None:
             self._option_owner = owner
             self._options[owner].append("")
         if tag == "div" and not ident and "display:none" in attributes.get("style", "").replace(" ", ""):
@@ -472,7 +474,7 @@ class Layout(HTMLParser):
         """Closes the innermost open element with this tag."""
         if tag in _VOID_TAGS:
             return
-        if tag == "a":
+        if tag in ("a", "label"):
             self._option_owner = None
         if tag == "p":
             self._in_hidden_p = False
@@ -532,15 +534,16 @@ class Layout(HTMLParser):
         return None
 
     def options(self, control_id: str) -> list[str]:
-        """The option labels of a select box, in menu order.
+        """The option labels of a select box or of a group of radio buttons, in order.
 
         Args:
-            control_id: The select box's id.
+            control_id: The control's id.
 
         Returns:
             The labels; empty for other elements.
         """
-        return [label.strip() for label in self._options.get(f"{control_id}-box", [])]
+        labels = self._options.get(f"{control_id}-box") or self._options.get(control_id, [])
+        return [label.strip() for label in labels]
 
     def label_of(self, control_id: str) -> str | None:
         """The text of a control's label element.
@@ -824,7 +827,7 @@ def annotate(table: Table, items: dict[str, dict[str, object]], layout_text: str
         expression = layout.format_expression(stringer) if stringer else layout.format_expression(control_id)
         value_labels = layout.value_labels(stringer) if stringer else None
         options = None
-        if layout.control_class(control_id) == "select-box":
+        if layout.control_class(control_id) in ("select-box", "radio-button"):
             labels = layout.options(control_id)
             values = _integers(item, "list_order") or list(range(len(labels)))
             options = [OptionRow(value=v, label=label) for v, label in zip(values, labels, strict=True)]
@@ -883,7 +886,7 @@ def _merge(row: ParameterRow, controls: list[_Control]) -> ParameterRow:
         raise ValueError(f"{row['prm']}: {len(merged['valueLabels'])} value labels for {count} values")
     # Menus of two values count as switches but have options too.
     if merged["kind"] == "picker" or merged["control"] == "menu":
-        merged["options"] = next((c.options for c in controls if c.options), None)
+        merged["options"] = next((c.options for c in controls if c.written and c.options), None)
         if merged["options"] is None and row["prm"] in _PICTURE_OPTIONS:
             labels = _PICTURE_OPTIONS[row["prm"]]
             merged["options"] = [OptionRow(value=row["minimum"] + i, label=label) for i, label in enumerate(labels)]

@@ -5,7 +5,7 @@ import SwiftUI
 struct Pages: View {
     let model: EditorModel
     // `-page TITLE` opens another page, for snapshots during development (see `TantoApp`).
-    @State private var selection = UserDefaults.standard.string(forKey: "page") ?? "BOOSTER"
+    @State private var selection = UserDefaults.standard.string(forKey: "page") ?? "EFFECTS"
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -29,7 +29,151 @@ struct Pages: View {
                 }
             }
             if let page = model.pages.joined().first(where: { $0.id == selection }) {
-                PageView(model: model, page: page)
+                switch page.id {
+                case "EFFECTS": EffectsPage(model: model, page: page)
+                case "CHAIN": ChainPage(model: model, page: page)
+                default: PageView(model: model, page: page)
+                }
+            }
+        }
+    }
+}
+
+/// Tone Studio's EFFECTS page: for each effect, the variations that its GREEN, RED and YELLOW buttons select.
+private struct EffectsPage: View {
+    let model: EditorModel
+    let page: EditorModel.Page
+
+    // Tone Studio's columns, each with the parameter that holds the colour its effect's button has selected.
+    private static let columns = [
+        (page: "effects-booster", title: "BOOSTER", selection: "PRM_FXBOX_SEL_BOOST"),
+        (page: "effects-mod", title: "MOD", selection: "PRM_FXBOX_SEL_MOD"),
+        (page: "effects-fx", title: "FX", selection: "PRM_FXBOX_SEL_FX"),
+        (page: "effects-delay", title: "DELAY", selection: "PRM_FXBOX_SEL_DELAY"),
+        (page: "effects-reverb", title: "REVERB", selection: "PRM_FXBOX_SEL_REVERB"),
+    ]
+
+    var body: some View {
+        FlowLayout(spacing: 12) {
+            ForEach(Self.columns, id: \.page) { column in
+                EffectColumn(
+                    model: model, title: column.title,
+                    selection: model.map.parameter(block: "Patch_2", prm: column.selection),
+                    parameters: page.parameters.filter { $0.page == column.page })
+            }
+        }
+    }
+}
+
+/// One effect's column of the EFFECTS page: a row per colour with a menu per variation. The coloured markers show the
+/// colour that the effect's button has selected; the button on the front panel changes it.
+private struct EffectColumn: View {
+    let model: EditorModel
+    let title: String
+    let selection: Parameter?
+    let parameters: [Parameter]
+
+    // The rows, from top to bottom.
+    private static let colours: [Color] = [.green, .red, .yellow]
+
+    var body: some View {
+        // REVERB's column also holds LAYER MODE and DELAY2, side by side.
+        let lefts = Set(parameters.compactMap(\.position?.x)).sorted()
+        let tops = Set(parameters.compactMap(\.position?.y)).sorted()
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 8) {
+                if lefts.count > 1 {
+                    GridRow {
+                        Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
+                        ForEach(lefts, id: \.self) { left in
+                            Text(heading(left)).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                ForEach(tops.indices, id: \.self) { row in
+                    GridRow {
+                        marker(row)
+                        ForEach(lefts, id: \.self) { left in
+                            cell(x: left, y: tops[row])
+                        }
+                    }
+                }
+            }
+        }
+        .padding(10)
+        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    // E.g. LAYER MODE for the column of LAYER MODE GRN.
+    private func heading(_ left: Int) -> String {
+        let first = parameters.first { $0.position?.x == left }
+        return first?.label.split(separator: " ").dropLast().joined(separator: " ") ?? ""
+    }
+
+    private func marker(_ row: Int) -> some View {
+        let selected = selection.flatMap(model.value(of:)) == row
+        return Image(systemName: selected ? "circle.fill" : "circle")
+            .foregroundStyle(Self.colours[min(row, Self.colours.count - 1)])
+            .accessibilityLabel(selected ? "Selected" : "")
+    }
+
+    @ViewBuilder
+    private func cell(x: Int, y: Int) -> some View {
+        if let parameter = parameters.first(where: { $0.position?.x == x && $0.position?.y == y }) {
+            ControlView(model: model, parameter: parameter, showsLabel: false).fixedSize()
+        }
+    }
+}
+
+/// Tone Studio's CHAIN page: one of seven orders of the blocks, each shown as Tone Studio draws it.
+private struct ChainPage: View {
+    let model: EditorModel
+    let page: EditorModel.Page
+
+    // The blocks of each chain from the input onwards, from the diagrams on Tone Studio's CHAIN page.
+    private static let chains = [
+        ["BOOSTER", "AMP/EQ", "MOD", "FX", "DELAY", "DELAY2", "REVERB"],
+        ["BOOSTER", "MOD", "AMP/EQ", "FX", "DELAY", "DELAY2", "REVERB"],
+        ["BOOSTER", "MOD", "FX", "AMP/EQ", "DELAY", "DELAY2", "REVERB"],
+        ["BOOSTER", "MOD", "FX", "DELAY", "AMP/EQ", "DELAY2", "REVERB"],
+        ["MOD", "BOOSTER", "AMP/EQ", "FX", "DELAY", "DELAY2", "REVERB"],
+        ["MOD", "BOOSTER", "FX", "AMP/EQ", "DELAY", "DELAY2", "REVERB"],
+        ["MOD", "BOOSTER", "FX", "DELAY", "AMP/EQ", "DELAY2", "REVERB"],
+    ]
+    // Tone Studio's colours for the blocks.
+    private static let tints: [String: Color] = [
+        "BOOSTER": Color(red: 0.90, green: 0.57, blue: 0.07), "MOD": Color(red: 0.33, green: 0.72, blue: 0.90),
+        "FX": Color(red: 0.73, green: 0.37, blue: 0.80), "DELAY": .gray, "DELAY2": .gray,
+        "REVERB": Color(red: 0.12, green: 0.84, blue: 0.75),
+    ]
+
+    var body: some View {
+        if let parameter = page.parameters.first {
+            let value = model.value(of: parameter) ?? parameter.minimum
+            VStack(alignment: .leading, spacing: 8) {
+                Picker(
+                    parameter.label,
+                    selection: Binding(get: { value }, set: { new in Task { await model.set(parameter, to: new) } })
+                ) {
+                    ForEach(parameter.options ?? [], id: \.value) { option in
+                        HStack(spacing: 6) {
+                            Text(option.label).monospaced().frame(width: 80, alignment: .leading)
+                            ForEach(Self.chains[option.value], id: \.self) { block in
+                                Text(block)
+                                    .font(.caption.weight(.medium))
+                                    .padding(.horizontal, 8).padding(.vertical, 3)
+                                    .background((Self.tints[block] ?? .secondary).opacity(0.3), in: Capsule())
+                            }
+                        }
+                        .tag(option.value)
+                    }
+                }
+                .pickerStyle(.radioGroup)
+                .labelsHidden()
+                if let refusal = model.refusals[parameter.offset] {
+                    Text(refusal).font(.caption2).foregroundStyle(.red)
+                }
             }
         }
     }
