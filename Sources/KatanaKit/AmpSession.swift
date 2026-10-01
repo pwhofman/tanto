@@ -12,6 +12,24 @@ public enum AmpError: Error, Equatable, Sendable {
     case timeout(Address)
 }
 
+/// Reasons a write is refused before anything is sent.
+public enum WriteError: Error, Equatable, Sendable {
+    /// No Tone Studio control writes this parameter, so Tanto does not either (design spec, section 3.5).
+    case notWritable(String)
+    /// The value lies outside the parameter's range.
+    case outOfRange(String, Int)
+    /// A patch name must be at most 16 characters from space to `}`.
+    case invalidName(String)
+}
+
+/// Whether an outgoing message waits its turn or goes next.
+enum WritePriority {
+    /// After everything already queued.
+    case normal
+    /// Before all queued normal messages; used for decreases and Panic (design spec, section 5.2).
+    case high
+}
+
 /// What the amp reported while connecting.
 public struct ConnectionInfo: Equatable, Sendable {
     /// The identity reply, from `F0` to `F7`.
@@ -65,7 +83,8 @@ public struct SessionTiming: Sendable {
 /// A conversation with the amp over a `MIDITransport`.
 ///
 /// Messages go out one at a time and at least `timing.spacing` apart. After `readLivePatch(_:)` the session keeps a
-/// copy of the live patch that follows every change the amp reports.
+/// copy of the live patch that follows every change the amp reports. Writing is internal to KatanaKit: the app writes
+/// through `SafetyGuard`.
 public actor AmpSession {
     /// Largest number of bytes one RQ1 asks for (Tone Studio's `SYSEX_MAXLEN`).
     public static let maxReadSize = 128
@@ -86,7 +105,7 @@ public actor AmpSession {
     private var deviceID = SysEx.defaultDeviceID
     private var lastSend: ContinuousClock.Instant?
     private var busy = false
-    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private var waiters: [Waiter] = []
     private var pending: Pending?
     private var requestCount = 0
     private var listener: Task<Void, Never>?
@@ -104,6 +123,11 @@ public actor AmpSession {
     }
 
     private struct NoReply: Error {}
+
+    private struct Waiter {
+        let priority: WritePriority
+        let continuation: CheckedContinuation<Void, Never>
+    }
 
     /// Creates a session; nothing is sent until `connect()` or `read(_:size:)` is called.
     ///
@@ -189,6 +213,40 @@ public actor AmpSession {
         let channel = ValueEncoding.int2x7.decode(try await read(.currentPatchNumber, size: 2))
         currentChannel = channel
         return channel
+    }
+
+    /// Writes a displayed value to the live patch and to the copy of it.
+    ///
+    /// - Parameters:
+    ///   - value: The displayed value.
+    ///   - parameter: A parameter that a Tone Studio control writes.
+    ///   - priority: `.high` to go before queued messages.
+    /// - Throws: `WriteError` if the parameter or value is not allowed; an error from the transport.
+    func write(_ value: Int, to parameter: Parameter, priority: WritePriority = .normal) async throws {
+        guard parameter.written, parameter.encoding != .ascii16 else { throw WriteError.notWritable(parameter.prm) }
+        let raw = value + parameter.rawOffset
+        let rawLimit = parameter.encoding == .int1x7 ? 128 : 16384
+        guard (parameter.minimum...parameter.maximum).contains(value), (0..<rawLimit).contains(raw) else {
+            throw WriteError.outOfRange(parameter.prm, value)
+        }
+        let address = Address.temporaryPatch.advanced(by: parameter.offset)
+        let data = parameter.encoding.encode(raw)
+        try await sendCommand(SysEx.dt1(address, data: data, deviceID: deviceID), priority: priority)
+        applyToLivePatch(address, data)
+    }
+
+    /// Writes the name of the live patch, as Tone Studio's WRITE dialog does.
+    ///
+    /// - Parameter name: At most 16 characters from space to `}`.
+    /// - Throws: `WriteError.invalidName`; an error from the transport.
+    func writeLiveName(_ name: String) async throws {
+        let bytes = Array(name.utf8)
+        guard bytes.count <= PatchName.length, bytes.allSatisfy({ (0x20...0x7D).contains($0) }) else {
+            throw WriteError.invalidName(name)
+        }
+        let padded = bytes + Array(repeating: 0x20, count: PatchName.length - bytes.count)
+        try await sendCommand(SysEx.dt1(.temporaryPatch, data: padded, deviceID: deviceID))
+        applyToLivePatch(.temporaryPatch, padded)
     }
 
     /// The displayed value of a parameter in the copy of the live patch.
@@ -305,8 +363,8 @@ public actor AmpSession {
         pending.continuation.resume(throwing: NoReply())
     }
 
-    private func sendCommand(_ message: [UInt8]) async throws {
-        await acquire()
+    private func sendCommand(_ message: [UInt8], priority: WritePriority = .normal) async throws {
+        await acquire(priority)
         defer { release() }
         try await waitForSlot()
         try transport.send(message)
@@ -319,20 +377,28 @@ public actor AmpSession {
         }
     }
 
-    // A first-come, first-served lock: one message is in flight at a time.
-    private func acquire() async {
+    // One message is in flight at a time. Waiters are served first come, first served, except that high-priority
+    // waiters go before all normal ones.
+    private func acquire(_ priority: WritePriority = .normal) async {
         if !busy {
             busy = true
             return
         }
-        await withCheckedContinuation { waiters.append($0) }
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let waiter = Waiter(priority: priority, continuation: continuation)
+            if priority == .high, let firstNormal = waiters.firstIndex(where: { $0.priority == .normal }) {
+                waiters.insert(waiter, at: firstNormal)
+            } else {
+                waiters.append(waiter)
+            }
+        }
     }
 
     private func release() {
         if waiters.isEmpty {
             busy = false
         } else {
-            waiters.removeFirst().resume()
+            waiters.removeFirst().continuation.resume()
         }
     }
 }

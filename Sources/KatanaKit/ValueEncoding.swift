@@ -45,6 +45,9 @@ public enum ValueEncoding: String, Codable, Sendable {
 
 /// The 16-character patch name.
 public enum PatchName {
+    /// Number of characters, padded with spaces.
+    public static let length = 16
+
     /// Decodes a stored name.
     ///
     /// - Parameter bytes: The 16 name bytes.
