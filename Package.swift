@@ -7,5 +7,6 @@ let package = Package(
     targets: [
         .target(name: "KatanaKit", resources: [.copy("Resources/parameters.json")]),
         .testTarget(name: "KatanaKitTests", dependencies: ["KatanaKit"]),
+        .executableTarget(name: "TantoProbe", dependencies: ["KatanaKit"]),
     ]
 )
