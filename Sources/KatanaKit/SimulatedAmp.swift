@@ -4,7 +4,9 @@ import Synchronization
 /// An in-memory Katana MkII for tests and for development while the amp is off.
 ///
 /// It answers identity requests and RQ1 reads from its memory, stores DT1 writes, and records every message it
-/// receives with its arrival time. Like the real amp, it ignores RQ1 and DT1 messages for another device ID.
+/// receives with its arrival time. It copies what hardware check 1 showed of the real amp: it ignores RQ1 and DT1
+/// messages for another device ID, the VOLUME knob register sets the amp volume one to one, and a channel switch sends
+/// the channel number followed by the whole patch in messages of 241 bytes.
 public final class SimulatedAmp: MIDITransport {
     /// A message the simulated amp received.
     public struct Received: Sendable {
@@ -24,6 +26,9 @@ public final class SimulatedAmp: MIDITransport {
     public let incoming: AsyncStream<[UInt8]>
     private let continuation: AsyncStream<[UInt8]>.Continuation
     private let state: Mutex<State>
+    private let patchSize: Int
+    private let volumeKnobOffset: Int?
+    private let ampVolumeOffset: Int?
 
     private struct State {
         var memory: [Int: UInt8]
@@ -42,6 +47,9 @@ public final class SimulatedAmp: MIDITransport {
     ///   - identityReply: Reply to identity requests; byte 2 sets the device ID.
     public init(map: ParameterMap, identityReply: [UInt8] = SimulatedAmp.katanaIdentityReply) {
         deviceID = identityReply[2]
+        patchSize = map.patchSize
+        volumeKnobOffset = map.parameter(block: "Status", prm: "PRM_KNOB_POS_VOLUME")?.offset
+        ampVolumeOffset = map.parameter(block: "Patch_0", prm: "PRM_PREAMP_A_LEVEL")?.offset
         (incoming, continuation) = AsyncStream.makeStream(of: [UInt8].self)
         var memory: [Int: UInt8] = [:]
         let patches =
@@ -86,11 +94,48 @@ public final class SimulatedAmp: MIDITransport {
                 for (index, byte) in data.enumerated() {
                     state.memory[address.linear + index] = byte
                 }
+                if let volumeKnobOffset, let ampVolumeOffset,
+                    address == Address.temporaryPatch.advanced(by: volumeKnobOffset), let volume = data.first
+                {
+                    state.memory[Address.temporaryPatch.linear + ampVolumeOffset] = volume
+                }
             }
             return nil
         }
         if let reply {
             continuation.yield(reply)
+        }
+    }
+
+    /// Sends any message to Tanto as if the amp had sent it, e.g. a corrupted one.
+    ///
+    /// - Parameter message: The bytes.
+    public func sendFromAmp(_ message: [UInt8]) {
+        continuation.yield(message)
+    }
+
+    /// Simulates pressing a channel button: the stored patch becomes the live patch, and the amp sends the channel
+    /// number followed by the whole patch.
+    ///
+    /// - Parameter slot: 0 = PANEL, 1–4 = A1–A4, 5–8 = B1–B4.
+    public func switchChannelOnAmp(_ slot: Int) {
+        let messages: [[UInt8]] = state.withLock { state in
+            let stored = Address.userPatch(slot).linear
+            let live = Address.temporaryPatch.linear
+            for index in 0..<patchSize {
+                state.memory[live + index] = state.memory[stored + index] ?? 0
+            }
+            state.memory[Address.currentPatchNumber.linear] = 0
+            state.memory[Address.currentPatchNumber.linear + 1] = UInt8(slot)
+            var messages = [SysEx.dt1(.currentPatchNumber, data: [0, UInt8(slot)], deviceID: deviceID)]
+            for start in stride(from: 0, to: patchSize, by: 241) {
+                let data = (start..<min(start + 241, patchSize)).map { state.memory[live + $0] ?? 0 }
+                messages.append(SysEx.dt1(.temporaryPatch.advanced(by: start), data: data, deviceID: deviceID))
+            }
+            return messages
+        }
+        for message in messages {
+            continuation.yield(message)
         }
     }
 

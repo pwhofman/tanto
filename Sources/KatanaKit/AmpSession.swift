@@ -33,6 +33,14 @@ public struct AmpChange: Equatable, Sendable {
     public let data: [UInt8]
 }
 
+/// A change of the live patch, from whatever source: a read, the amp, or a write by Tanto.
+public enum LiveUpdate: Equatable, Sendable {
+    /// Bytes of the live patch changed, starting at `offset` from the patch base.
+    case bytes(offset: Int, data: [UInt8])
+    /// The amp switched to another channel (0 = PANEL, 1–8 = A1–B4). The amp then sends the new patch as bytes.
+    case channel(Int)
+}
+
 /// Timing of the conversation with the amp.
 public struct SessionTiming: Sendable {
     /// Minimum time between two outgoing messages.
@@ -56,15 +64,21 @@ public struct SessionTiming: Sendable {
 
 /// A conversation with the amp over a `MIDITransport`.
 ///
-/// Messages go out one at a time and at least `timing.spacing` apart. This version reads and switches the
-/// editor-communication mode; it has no way to write parameters.
+/// Messages go out one at a time and at least `timing.spacing` apart. After `readLivePatch(_:)` the session keeps a
+/// copy of the live patch that follows every change the amp reports.
 public actor AmpSession {
     /// Largest number of bytes one RQ1 asks for (Tone Studio's `SYSEX_MAXLEN`).
     public static let maxReadSize = 128
 
     /// Changes made on the amp itself, reported while connected.
     public nonisolated let changes: AsyncStream<AmpChange>
+    /// Every change of the copy of the live patch, and channel switches.
+    public nonisolated let updates: AsyncStream<LiveUpdate>
+    /// The selected channel (0 = PANEL, 1–8 = A1–B4), once read or reported by the amp.
+    public private(set) var currentChannel: Int?
     private let changesContinuation: AsyncStream<AmpChange>.Continuation
+    private let updatesContinuation: AsyncStream<LiveUpdate>.Continuation
+    private var livePatch: [UInt8]?
     private let transport: any MIDITransport
     private let timing: SessionTiming
     private let clock = ContinuousClock()
@@ -100,11 +114,13 @@ public actor AmpSession {
         self.transport = transport
         self.timing = timing
         (changes, changesContinuation) = AsyncStream.makeStream(of: AmpChange.self)
+        (updates, updatesContinuation) = AsyncStream.makeStream(of: LiveUpdate.self)
     }
 
     deinit {
         listener?.cancel()
         changesContinuation.finish()
+        updatesContinuation.finish()
     }
 
     /// Runs Tone Studio's connect sequence: identity request, editor communication level, editor mode on. Like Tone
@@ -151,6 +167,63 @@ public actor AmpSession {
         return data
     }
 
+    /// Reads the whole live patch, block by block, and keeps it as the copy that later changes apply to.
+    ///
+    /// - Parameter map: The patch layout.
+    /// - Throws: `AmpError.timeout` if a read gets no reply.
+    public func readLivePatch(_ map: ParameterMap) async throws {
+        var patch = [UInt8](repeating: 0, count: map.patchSize)
+        for block in map.table.blocks {
+            let data = try await read(.temporaryPatch.advanced(by: block.offset), size: block.size)
+            patch.replaceSubrange(block.offset..<(block.offset + block.size), with: data)
+        }
+        livePatch = patch
+        updatesContinuation.yield(.bytes(offset: 0, data: patch))
+    }
+
+    /// Reads the selected channel.
+    ///
+    /// - Returns: 0 for PANEL, 1–8 for A1–B4.
+    /// - Throws: `AmpError.timeout` if the read gets no reply.
+    public func readCurrentChannel() async throws -> Int {
+        let channel = ValueEncoding.int2x7.decode(try await read(.currentPatchNumber, size: 2))
+        currentChannel = channel
+        return channel
+    }
+
+    /// The displayed value of a parameter in the copy of the live patch.
+    ///
+    /// - Parameter parameter: A numeric parameter.
+    /// - Returns: The value, or `nil` before `readLivePatch(_:)` and for the patch name.
+    public func liveValue(of parameter: Parameter) -> Int? {
+        let end = parameter.offset + parameter.encoding.byteCount
+        guard let livePatch, parameter.encoding != .ascii16, end <= livePatch.count else { return nil }
+        return parameter.value(fromRaw: parameter.encoding.decode(livePatch[parameter.offset..<end]))
+    }
+
+    /// The name in the copy of the live patch.
+    ///
+    /// - Returns: The name, or `nil` before `readLivePatch(_:)`.
+    public func liveName() -> String? {
+        livePatch.map { PatchName.decode($0[0..<16]) }
+    }
+
+    private func applyToLivePatch(_ address: Address, _ data: [UInt8]) {
+        if address == .currentPatchNumber, data.count == 2 {
+            let channel = ValueEncoding.int2x7.decode(data)
+            currentChannel = channel
+            updatesContinuation.yield(.channel(channel))
+            return
+        }
+        let offset = address.linear - Address.temporaryPatch.linear
+        guard var patch = livePatch, offset >= 0, offset < patch.count else { return }
+        // The amp's dump after a channel switch runs a few bytes past the last block.
+        let count = min(data.count, patch.count - offset)
+        patch.replaceSubrange(offset..<(offset + count), with: data.prefix(count))
+        livePatch = patch
+        updatesContinuation.yield(.bytes(offset: offset, data: Array(data.prefix(count))))
+    }
+
     private func startListening() {
         guard listener == nil else { return }
         let incoming = transport.incoming
@@ -172,6 +245,7 @@ public actor AmpSession {
                 resolve(pending, with: data)
             } else {
                 changesContinuation.yield(AmpChange(address: address, data: data))
+                applyToLivePatch(address, data)
             }
         case .malformed(let bytes):
             logger.error("dropped malformed message of \(bytes.count) bytes")
