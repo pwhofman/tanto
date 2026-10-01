@@ -138,8 +138,8 @@ Afterwards, turn MASTER to minimum, then switch to another channel and back.
 | Booster on and off: VOLUME dips and comes back | Yes. |
 | Colour LED order (OFF, GREEN, RED, YELLOW) matches the amp | The first attempt failed: Tanto wrote the LED register `60 00 06 5D`, which only shows the colour; Tone Studio never writes it, but presses the button with `00` to `7F 01 01 01`–`05`, and VARIATION with `7F 01 01 00` (`panelActionBtnInfo` in `js/businesslogic/bts/effect_controller.js`). With the presses (plan 2b, task 8): BOOSTER COLOR cycles GREEN, RED, YELLOW on the amp and in the window, and VARIATION toggles on and off. |
 | Not connected when switched off; reconnects when switched on | Yes. |
-| Audible Esc and booster switch | |
-| The window's look: anything unclear or wrong | |
+| Audible Esc and booster switch | Esc stopped the sound; the booster switch and BOOSTER COLOR dipped briefly and came back. |
+| The window's look: anything unclear or wrong | No problems reported. |
 
 ## Check 3: librarian
 
