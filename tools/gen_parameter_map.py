@@ -100,6 +100,16 @@ COMMAND_BUTTONS = frozenset(
         "delay2-tap-btn",
     }
 )
+# The root of a page in `layout.div`: the front panel (`editor-panel-page`) or a block's, e.g. `editor-booster-page`.
+_PAGE_ROOT = re.compile(r"editor-[\w-]+-page")
+_PANEL_ROOT = "editor-panel-page"
+# How Tanto shows a control, from the classes of Tone Studio's controls in order of preference.
+_CONTROL_CLASSES = (
+    ("knob", frozenset({"knob", "dial"})),
+    ("slider", frozenset({"slider"})),
+    ("menu", frozenset({"select-box"})),
+    ("segmented", frozenset({"radio-button"})),
+)
 _VOID_TAGS = frozenset({"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "wbr"})
 
 
@@ -116,6 +126,13 @@ class OptionRow(TypedDict):
 
     value: int
     label: str
+
+
+class PositionRow(TypedDict):
+    """Where a control sits: its offset from the top left of its page, in Tone Studio's pixels."""
+
+    x: int
+    y: int
 
 
 class ConditionRow(TypedDict):
@@ -140,6 +157,9 @@ class ParameterRow(TypedDict):
     guarded: bool
     louder: str | None
     written: bool
+    control: str | None
+    position: PositionRow | None
+    panel: PositionRow | None
     kind: str
     section: str | None
     label: str
@@ -547,6 +567,32 @@ class Layout(HTMLParser):
         labels = self._hidden.get(ident)
         return [re.sub(r"\s+", " ", label).strip() for label in labels] if labels else None
 
+    def position(self, ident: str) -> tuple[str, int, int] | None:
+        """Where an element sits: its page and its offset from the page's top left.
+
+        The offset adds up the ``left`` and ``top`` of the element's style and those of its frames, up to the page's
+        root element.
+
+        Args:
+            ident: An element id.
+
+        Returns:
+            The page root's id and the offset in Tone Studio's pixels, or ``None`` if the element is on no page.
+        """
+        x = y = 0.0
+        current: str | None = ident
+        while current is not None and _PAGE_ROOT.fullmatch(current) is None:
+            style = self._attributes.get(current, {}).get("style", "")
+            for name, value in re.findall(r"(left|top):\s*(-?[\d.]+)px", style):
+                if name == "left":
+                    x += float(value)
+                else:
+                    y += float(value)
+            current = self.parent(current)
+        if current is None:
+            return None
+        return current, round(x), round(y)
+
     def format_expression(self, ident: str) -> str | None:
         """The display-format expression of a stringer, or of a spinner's input field.
 
@@ -605,6 +651,9 @@ def build_table(source: str) -> Table:
                 "guarded": guarded,
                 "louder": "up" if guarded else _RAMPED.get(e.prm),
                 "written": False,
+                "control": None,
+                "position": None,
+                "panel": None,
                 "kind": "numeric",
                 "section": None,
                 "label": e.name,
@@ -635,6 +684,45 @@ class _Control:
     value_labels: list[str] | None
     format: str | None
     conditions: tuple[tuple[int, tuple[int, ...]], ...]
+    position: tuple[str, int, int] | None
+
+
+def control_of(row: ParameterRow, control_classes: set[str]) -> str | None:
+    """Decides how Tanto shows a parameter, following how Tone Studio draws it.
+
+    Args:
+        row: The parameter, with its kind decided.
+        control_classes: Classes of Tone Studio's written controls for it.
+
+    Returns:
+        ``knob``, ``slider``, ``menu``, ``segmented`` or ``switch``; ``None`` for the patch name.
+    """
+    if row["kind"] == "text":
+        return None
+    for control, classes in _CONTROL_CLASSES:
+        if control_classes & classes:
+            return control
+    if row["kind"] == "switch":
+        return "switch"
+    if control_classes & {"toggle-button", "check-box"}:
+        return "segmented"
+    return "menu" if row["kind"] == "picker" else "knob"
+
+
+def _place(controls: list[_Control], control: str | None, on_panel: bool) -> PositionRow | None:
+    """Finds where a parameter is shown, on the front panel or on its page.
+
+    The control of the class that decided ``control`` wins over spinners and other companions.
+    """
+    preferred = next((classes for kind, classes in _CONTROL_CLASSES if kind == control), frozenset())
+    placed = [
+        c for c in controls if c.written and c.position is not None and (c.position[0] == _PANEL_ROOT) == on_panel
+    ]
+    placed.sort(key=lambda c: c.control_class not in preferred)
+    if not placed or placed[0].position is None:
+        return None
+    _, x, y = placed[0].position
+    return PositionRow(x=x, y=y)
 
 
 def _string(item: dict[str, object], key: str) -> str | None:
@@ -726,6 +814,7 @@ def annotate(table: Table, items: dict[str, dict[str, object]], layout_text: str
                     value_labels=value_labels,
                     format=display_format(expression) if expression else None,
                     conditions=_conditions(control_id, block, layout, switchers, blocks),
+                    position=layout.position(control_id),
                 )
             )
 
@@ -745,6 +834,9 @@ def _merge(row: ParameterRow, controls: list[_Control]) -> ParameterRow:
     merged["written"] = any(c.written for c in controls)
     merged["label"] = next((c.label for c in controls if c.label), row["name"])
     merged["kind"] = kind_of(row, {c.control_class for c in controls if c.control_class})
+    merged["control"] = control_of(merged, {c.control_class for c in controls if c.written and c.control_class})
+    merged["position"] = _place(controls, merged["control"], on_panel=False)
+    merged["panel"] = _place(controls, merged["control"], on_panel=True)
     # The guard rule also reads Tone Studio's label (spec 5.2); it is the only name of some entries.
     if (
         merged["kind"] == "numeric"

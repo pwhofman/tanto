@@ -84,3 +84,12 @@ import Testing
     try FileManager.default.removeItem(at: url)
     #expect(loaded.table == table)
 }
+
+@Test func controlsKnowHowAndWhereToneStudioShowsThem() throws {
+    let map = try ParameterMap.bundled()
+    let drive = try #require(map.parameter(block: "Patch_0", prm: "PRM_ODDS_DRIVE"))
+    #expect(drive.control == .knob && drive.position == Parameter.Position(x: 34, y: 101) && drive.panel == nil)
+    let gain = try #require(map.parameter(block: "Status", prm: "PRM_KNOB_POS_GAIN"))
+    #expect(gain.panel == Parameter.Position(x: 124, y: 88))
+    #expect(try #require(map.parameter(block: "Fx(1)", prm: "PRM_FX1_GEQ_BAND1")).control == .slider)
+}

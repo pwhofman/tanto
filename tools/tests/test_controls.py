@@ -52,6 +52,9 @@ def row(prm: str, minimum: int = 0, maximum: int = 100, encoding: str = "int1x7"
         "guarded": False,
         "louder": None,
         "written": False,
+        "control": None,
+        "position": None,
+        "panel": None,
         "kind": "numeric",
         "section": None,
         "label": "",
@@ -175,6 +178,20 @@ def test_real_controls() -> None:
     for led in ("VARI", "BOOST", "MOD", "FX", "DELAY", "REVERB"):
         assert not by_key[("Status", f"PRM_LED_STATE_{led}")]["written"], led
     assert sum(1 for p in parameters if p["written"]) == 616
+
+    # How Tone Studio shows a control and where: on its page, measured from the page's top left, and on the front panel.
+    drive = by_key[("Patch_0", "PRM_ODDS_DRIVE")]
+    assert (drive["control"], drive["position"], drive["panel"]) == ("knob", {"x": 34, "y": 101}, None)
+    gain = by_key[("Status", "PRM_KNOB_POS_GAIN")]
+    assert (gain["control"], gain["position"], gain["panel"]) == ("knob", None, {"x": 124, "y": 88})
+    assert by_key[("Patch_0", "PRM_ODDS_TYPE")]["control"] == "menu"
+    assert by_key[("Patch_0", "PRM_ODDS_SW")]["control"] == "switch"
+    assert by_key[("Fx(1)", "PRM_FX1_GEQ_BAND1")]["control"] == "slider"
+    written = [p for p in parameters if p["written"] and p["kind"] != "text"]
+    assert all(p["control"] in ("knob", "slider", "switch", "menu", "segmented") for p in written)
+    assert all(p["position"] is not None or p["panel"] is not None for p in written)
+    # MOD and FX share a layout, so their controls sit at the same places.
+    assert by_offset[134]["position"] == by_offset[390]["position"]
 
     # T.WAH PEAK shows for MOD/FX type 0 only, in both the MOD (Fx(1)) and the FX (Fx(2)) block.
     assert by_offset[134]["visibleWhen"] == [{"offset": 129, "values": [0]}]

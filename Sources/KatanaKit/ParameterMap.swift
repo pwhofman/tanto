@@ -52,6 +52,34 @@ public struct Parameter: Codable, Sendable, Hashable {
     public let format: DisplayFormat?
     /// The parameter is shown only while all of these hold; `nil` means always.
     public let visibleWhen: [Condition]?
+    /// How Tone Studio draws the parameter; `nil` for the patch name.
+    public let control: Control?
+    /// Where Tone Studio puts the parameter on its block's page; `nil` if only the front panel shows it.
+    public let position: Position?
+    /// Where Tone Studio puts the parameter on the front panel; `nil` if the panel does not show it.
+    public let panel: Position?
+
+    /// How Tone Studio draws a parameter, and so how Tanto shows it.
+    public enum Control: String, Codable, Sendable {
+        /// A rotary knob or dial.
+        case knob
+        /// A linear slider, as in the graphic EQs.
+        case slider
+        /// An on/off switch.
+        case `switch`
+        /// A pop-up menu.
+        case menu
+        /// A row of buttons of which one is selected.
+        case segmented
+    }
+
+    /// A place on Tone Studio's page or front panel: the offset from its top left, in Tone Studio's pixels.
+    public struct Position: Codable, Sendable, Hashable {
+        /// From the left.
+        public let x: Int
+        /// From the top.
+        public let y: Int
+    }
 
     /// A direction of change.
     public enum Direction: String, Codable, Sendable {
