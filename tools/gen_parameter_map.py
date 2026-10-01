@@ -52,6 +52,9 @@ _FRONT_PANEL_KNOBS = frozenset(
         "PRM_KNOB_POS_REVERB",
     }
 )
+# Unguarded parameters that get louder in one direction; Tanto ramps changes in that direction, without a ceiling,
+# because the limiter's LEVEL is guarded already. A higher threshold or a lower ratio lets more of the signal through.
+_RAMPED = {"PRM_FX1_LIMITER_THRESHOLD": "up", "PRM_FX1_LIMITER_RATIO": "down"}
 # Option labels that Tone Studio draws as pictures. The amp types follow `panelAmpTypeInfo` in
 # js/businesslogic/bts/effect_controller.js; the colours follow the GRN, RED, YLW order of the colour assignments, with
 # 0 for an unlit LED.
@@ -121,6 +124,7 @@ class ParameterRow(TypedDict):
     rawOffset: int
     initial: int | None
     guarded: bool
+    louder: str | None
     written: bool
     kind: str
     section: str | None
@@ -573,6 +577,7 @@ def build_table(source: str) -> Table:
         for e in entries:
             if e.encoding is None:
                 continue
+            guarded = e.prm in _FRONT_PANEL_KNOBS or (rule_applies and is_guarded(e))
             row: ParameterRow = {
                 "prm": e.prm,
                 "name": e.name,
@@ -583,7 +588,8 @@ def build_table(source: str) -> Table:
                 "maximum": e.maximum,
                 "rawOffset": e.raw_offset,
                 "initial": e.initial,
-                "guarded": e.prm in _FRONT_PANEL_KNOBS or (rule_applies and is_guarded(e)),
+                "guarded": guarded,
+                "louder": "up" if guarded else _RAMPED.get(e.prm),
                 "written": False,
                 "kind": "numeric",
                 "section": None,
@@ -733,6 +739,7 @@ def _merge(row: ParameterRow, controls: list[_Control]) -> ParameterRow:
         and _NOT_GUARDED.search(row["prm"]) is None
     ):
         merged["guarded"] = True
+        merged["louder"] = "up"
     merged["format"] = next((c.format for c in controls if c.format), None)
     merged["valueLabels"] = next((c.value_labels for c in controls if c.value_labels), None)
     count = row["maximum"] - row["minimum"] + 1

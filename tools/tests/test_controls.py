@@ -48,6 +48,7 @@ def row(prm: str, minimum: int = 0, maximum: int = 100, encoding: str = "int1x7"
         "rawOffset": 0,
         "initial": 0,
         "guarded": False,
+        "louder": None,
         "written": False,
         "kind": "numeric",
         "section": None,
@@ -155,6 +156,17 @@ def test_real_controls() -> None:
     assert (by_key[("Patch_0", "PRM_ODDS_TYPE")]["options"] or [])[0] == {"value": 1, "label": "CLEAN BOOST"}
     assert (by_key[("Patch_1", "PRM_REVERB_TYPE")]["options"] or [])[0] == {"value": 4, "label": "PLATE"}
 
+    # Changes in the louder direction are ramped (spec 5.2): guarded parameters upwards, and without a ceiling the
+    # limiter's threshold upwards and its ratio downwards.
+    assert all(p["louder"] == "up" for p in parameters if p["guarded"])
+    for block in ("Fx(1)", "Fx(2)"):
+        threshold = by_key[(block, "PRM_FX1_LIMITER_THRESHOLD")]
+        ratio = by_key[(block, "PRM_FX1_LIMITER_RATIO")]
+        assert (threshold["guarded"], threshold["louder"]) == (False, "up")
+        assert (ratio["guarded"], ratio["louder"]) == (False, "down")
+    assert by_key[("Fx(1)", "PRM_FX1_TREMOLO_DEPTH")]["louder"] is None
+    assert sum(1 for p in parameters if p["louder"]) == 217 + 4
+
     # T.WAH PEAK shows for MOD/FX type 0 only, in both the MOD (Fx(1)) and the FX (Fx(2)) block.
     assert by_offset[134]["visibleWhen"] == [{"offset": 129, "values": [0]}]
     assert (by_offset[390]["visibleWhen"], by_offset[390]["section"]) == ([{"offset": 385, "values": [0]}], "fx")
@@ -186,3 +198,4 @@ var Patch = [
     assert (by_offset[640]["guarded"], by_offset[640]["written"], by_offset[640]["section"]) == (True, True, "delay")
     assert (by_offset[672]["guarded"], by_offset[672]["section"]) == (True, "delay2")
     assert (by_offset[641]["guarded"], by_offset[641]["label"]) == (False, "RATE")
+    assert (by_offset[640]["louder"], by_offset[641]["louder"]) == ("up", None)

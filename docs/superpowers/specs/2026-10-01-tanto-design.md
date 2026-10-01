@@ -163,6 +163,11 @@ PRESENCE knobs, booster TONE and BOTTOM), times, rates and depths are not guarde
 parameters. The rule also marks amp parameters and FOOT VOLUME, which Tanto does not write (3.5); for those it serves
 only the channel check of 5.4 and the warnings.
 
+Two unguarded parameters of the MOD and FX limiter get louder in one direction: a higher THRESHOLD and a lower RATIO let
+more of the signal through. Changes in that direction are ramped like guarded increases, without a ceiling, because the
+limiter's LEVEL is guarded. The table marks the direction in which each parameter gets louder (`louder`). TREMOLO DEPTH
+stays unguarded: lowering it fills in the dips of the tremolo without raising its peaks.
+
 - Ceiling: `ceiling = min + ⌊f · (max − min)⌋` with f = 50 % by default. f is set in Settings from 0 % to 100 % in 5 %
   steps; raising it asks for confirmation. At 50 %: VOLUME and GAIN knobs 50, effect knobs 49, delay EFFECT LEVEL 60,
   EQ gains and levels 0 dB.
@@ -174,12 +179,15 @@ only the channel check of 5.4 and the warnings.
   The 20 ms pacing can only make a ramp slower.
 - Decreases take the next message slot through the priority lane, ahead of queued increases, and cancel any ramp of the
   same parameter. The 20 ms spacing applies to every message, including priority ones.
-- An effect knob turned up from −1 switches its effect on at the lowest amount and then ramps like any increase.
+- Moving an effect knob (BOOSTER, MOD, FX, DELAY, REVERB) between −1 and 0 or more switches its effect on or off, as
+  hardware check 1 showed for the booster. This uses the soft switch of 5.3: switching on sets the knob to 0, and a
+  higher request then ramps from there.
 
 ### 5.3 Switches and pickers
 
 Switches and pickers in the sound path (block on/off, the AMP TYPE knob, the VARIATION and colour buttons, effect types,
-colour assignments, chain, block positions, contour, cabinet resonance) use a soft switch:
+colour assignments, chain, block positions, contour, cabinet resonance), and effect knobs moved across −1, use a soft
+switch:
 
 1. If the VOLUME knob is above the ceiling, the change is refused with the message "Lower VOLUME below the ceiling
    first".

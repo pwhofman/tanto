@@ -232,8 +232,8 @@ func aKnobTurnedOnTheAmpEndsTheRamp(delay: Int) async throws {
     let real = try rig.parameter("Status", "PRM_KNOB_POS_BASS")
     let forged = Parameter(
         prm: real.prm, name: real.name, block: real.block, offset: real.offset, encoding: real.encoding, minimum: 0,
-        maximum: 127, rawOffset: 0, initial: nil, guarded: false, written: true, kind: .numeric, section: "amp",
-        label: real.label, options: nil, valueLabels: nil, format: nil, visibleWhen: nil)
+        maximum: 127, rawOffset: 0, initial: nil, guarded: false, louder: nil, written: true, kind: .numeric,
+        section: "amp", label: real.label, options: nil, valueLabels: nil, format: nil, visibleWhen: nil)
     await #expect(throws: SafetyError.notWritable(real.prm)) { try await rig.safety.set(forged, to: 120) }
     // Booster type 24 is in range but not in Tone Studio's menu.
     await #expect(throws: SafetyError.outOfRange("PRM_ODDS_TYPE", 24)) {
@@ -270,4 +270,73 @@ func aKnobTurnedOnTheAmpEndsTheRamp(delay: Int) async throws {
     #expect(rig.amp.memory(at: .temporaryPatch.advanced(by: volume.offset), count: 1) == [3])
     #expect(await rig.session.liveValue(of: volume) == 3)
     #expect(rig.writes(to: volume).map(\.value) == [11, 3])
+}
+
+private func setLive(_ values: [(Int, Parameter)]) -> (SimulatedAmp, ParameterMap) -> Void {
+    { amp, map in
+        for (value, parameter) in values {
+            setLive(value, parameter)(amp, map)
+        }
+    }
+}
+
+// An effect knob moved off −1 switches its effect on: a soft switch to 0, then the knob ramps (design spec, 5.2).
+@Test func anEffectKnobTurnedOnFromOffUsesTheSoftSwitch() async throws {
+    let volume = try knob("PRM_KNOB_POS_VOLUME")
+    let boost = try knob("PRM_KNOB_POS_BOOST")
+    let rig = try await Rig(prepare: setLive([(5, volume), (-1, boost)]))
+    let start = rig.amp.received.count
+    try await rig.safety.set(boost, to: 3)
+    await rig.safety.settle()
+    #expect(rig.writtenOffsets(after: start).prefix(2) == [volume.offset, boost.offset])
+    #expect(rig.writes(to: volume, after: start).map(\.value) == [0, 1, 2, 3, 4, 5])
+    #expect(rig.writes(to: boost, after: start).map(\.value) == [0, 1, 2, 3])
+}
+
+@Test func anEffectKnobTurnedToOffUsesTheSoftSwitch() async throws {
+    let volume = try knob("PRM_KNOB_POS_VOLUME")
+    let boost = try knob("PRM_KNOB_POS_BOOST")
+    let rig = try await Rig(prepare: setLive([(5, volume), (20, boost)]))
+    let start = rig.amp.received.count
+    try await rig.safety.set(boost, to: -1)
+    await rig.safety.settle()
+    #expect(rig.writtenOffsets(after: start).prefix(2) == [volume.offset, boost.offset])
+    #expect(rig.writes(to: volume, after: start).map(\.value) == [0, 1, 2, 3, 4, 5])
+    #expect(rig.writes(to: boost, after: start).map(\.value) == [-1])
+}
+
+@Test func anEffectKnobIsNotSwitchedWhileVolumeIsAboveTheCeiling() async throws {
+    let volume = try knob("PRM_KNOB_POS_VOLUME")
+    let boost = try knob("PRM_KNOB_POS_BOOST")
+    let rig = try await Rig(prepare: setLive([(88, volume), (-1, boost)]))
+    let before = rig.amp.received.count
+    await #expect(throws: SafetyError.volumeAboveCeiling(volume: 88, ceiling: 50)) {
+        try await rig.safety.set(boost, to: 3)
+    }
+    await rig.safety.settle()
+    #expect(rig.amp.received.count == before)
+}
+
+// A higher limiter threshold and a lower ratio let more through: those changes are ramped, the others go at once.
+@Test func theLimitersThresholdRisesAndRatioFallsAreRamped() async throws {
+    let map = try ParameterMap.bundled()
+    let threshold = try #require(map.parameter(block: "Fx(1)", prm: "PRM_FX1_LIMITER_THRESHOLD"))
+    let ratio = try #require(map.parameter(block: "Fx(1)", prm: "PRM_FX1_LIMITER_RATIO"))
+    let rig = try await Rig(prepare: setLive([(30, threshold), (11, ratio)]))
+    try await rig.safety.set(threshold, to: 35)
+    try await rig.safety.set(ratio, to: 8)
+    await rig.safety.settle()
+    try await rig.safety.set(threshold, to: 10)
+    try await rig.safety.set(ratio, to: 15)
+    await rig.safety.settle()
+    let thresholds = rig.writes(to: threshold)
+    let ratios = rig.writes(to: ratio)
+    #expect(thresholds.map(\.value) == [31, 32, 33, 34, 35, 10])
+    #expect(ratios.map(\.value) == [10, 9, 8, 15])
+    for (earlier, later) in zip(thresholds.prefix(5), thresholds.prefix(5).dropFirst()) {
+        #expect(later.time - earlier.time >= .milliseconds(20))  // 2 s / 100 steps
+    }
+    for (earlier, later) in zip(ratios.prefix(3), ratios.prefix(3).dropFirst()) {
+        #expect(later.time - earlier.time >= .seconds(2) / 17)
+    }
 }

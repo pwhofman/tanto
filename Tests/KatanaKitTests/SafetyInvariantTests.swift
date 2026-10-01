@@ -88,17 +88,20 @@ func randomRequestsKeepTheSafetyRules(seed: UInt64) async throws {
         #expect(parameter.written, "write to \(parameter.prm), which Tone Studio does not write")
         let new = parameter.value(fromRaw: parameter.encoding.decode(data))
         let old = value(at: parameter)
-        if parameter.guarded, new > old {
-            let ceiling = await safety.ceiling(of: parameter) ?? parameter.maximum
+        if let louder = parameter.louder, parameter.kind == .numeric, louder == .up ? new > old : new < old {
             rampSteps += 1
-            #expect(new == old + 1, "\(parameter.prm) jumped from \(old) to \(new)")
-            #expect(new <= ceiling, "\(parameter.prm) rose to \(new), above its ceiling \(ceiling)")
+            #expect(abs(new - old) == 1, "\(parameter.prm) jumped from \(old) to \(new)")
+            if let ceiling = await safety.ceiling(of: parameter) {
+                #expect(new <= ceiling, "\(parameter.prm) rose to \(new), above its ceiling \(ceiling)")
+            }
             if let last = lastTime[offset] {
                 let interval = rampDuration / (parameter.maximum - parameter.minimum)
-                #expect(message.time - last >= interval, "\(parameter.prm) rose too fast")
+                #expect(message.time - last >= interval, "\(parameter.prm) got louder too fast")
             }
         }
-        if parameter.kind == .toggle || parameter.kind == .picker {
+        if parameter.kind == .toggle || parameter.kind == .picker
+            || (parameter.switchesEffectOffBelowZero && (old < 0) != (new < 0))
+        {
             switchChanges += 1
             #expect(value(at: volume) == 0, "\(parameter.prm) switched while VOLUME was \(value(at: volume))")
         }
@@ -179,16 +182,20 @@ func randomRequestsWithChangesOnTheAmpKeepTheSafetyRules(seed: UInt64) async thr
         if !valid, !(parameter == volume && new == 0) {
             violations.append("\(parameter.prm) = \(new) while the copy was incomplete")
         }
-        if parameter.guarded, parameter.kind == .numeric, let known, new > known {
+        if let louder = parameter.louder, parameter.kind == .numeric, let known,
+            louder == .up ? new > known : new < known
+        {
             kinds.append("rise")
-            let ceiling = Ceiling.value(of: parameter, percent: 50) ?? parameter.maximum
-            if new > known + 1 { violations.append("\(parameter.prm) jumped from \(known) to \(new)") }
-            if new > ceiling { violations.append("\(parameter.prm) rose to \(new), above its ceiling \(ceiling)") }
+            if abs(new - known) > 1 { violations.append("\(parameter.prm) jumped from \(known) to \(new)") }
+            if let ceiling = Ceiling.value(of: parameter, percent: 50), new > ceiling {
+                violations.append("\(parameter.prm) rose to \(new), above its ceiling \(ceiling)")
+            }
             if let previous, now - previous < rampDuration / (parameter.maximum - parameter.minimum) {
-                violations.append("\(parameter.prm) rose too fast")
+                violations.append("\(parameter.prm) got louder too fast")
             }
         }
-        if parameter.kind == .toggle || parameter.kind == .picker {
+        let switchesEffect = parameter.switchesEffectOffBelowZero && known.map { ($0 < 0) != (new < 0) } == true
+        if parameter.kind == .toggle || parameter.kind == .picker || switchesEffect {
             kinds.append("switch")
             if knownVolume != 0 { violations.append("\(parameter.prm) switched while VOLUME was \(knownVolume ?? -1)") }
         }

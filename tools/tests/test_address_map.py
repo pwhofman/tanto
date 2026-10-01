@@ -99,6 +99,7 @@ def test_build_table_from_snippet() -> None:
         "rawOffset": 0,
         "initial": 50,
         "guarded": True,
+        "louder": "up",
         "written": False,
         "kind": "numeric",
         "section": None,

@@ -25,9 +25,11 @@ public enum SafetyError: Error, Equatable, Sendable {
 /// The only way to change the amp's sound (design spec, section 5).
 ///
 /// All writes go through one pump, one message at a time, in this order: the VOLUME dips of soft switches and the
-/// guard's own corrections, the changes of soft switches, decreases, and finally increases. Guarded increases rise one
-/// unit at a time, at least `rampDuration / (maximum - minimum)` apart, and never above the ceiling. A soft-switch change
-/// is only sent while the VOLUME knob is at 0. Panic goes to the session directly and passes everything.
+/// guard's own corrections, the changes of soft switches, changes that make the amp quieter, and finally those that
+/// make it louder. A change in the direction that makes a parameter louder (`Parameter.louder`) goes one unit at a
+/// time, at least `rampDuration / (maximum - minimum)` apart; a guarded parameter never rises above its ceiling. A
+/// soft-switch change is only sent while the VOLUME knob is at 0. Panic goes to the session directly and passes
+/// everything.
 ///
 /// Every write carries what it was decided on, and the session drops it if the amp reported a change of the parameter
 /// meanwhile, switched channels, or a Panic came. A change reported by the amp ends the guard's work on the parameter;
@@ -78,6 +80,8 @@ public actor SafetyGuard {
         let value: Int
         let priority: WritePriority
         let basis: WriteBasis
+        // For an effect knob switched on: the value to ramp to once the knob is at 0.
+        var then: Int?
     }
 
     // The last value Tanto wrote to a parameter that the amp may still hold.
@@ -132,8 +136,11 @@ public actor SafetyGuard {
         else {
             throw SafetyError.invalidTable("no guarded VOLUME knob")
         }
-        if let flat = map.table.parameters.first(where: { $0.guarded && $0.maximum <= $0.minimum }) {
+        if let flat = map.table.parameters.first(where: { $0.louder != nil && $0.maximum <= $0.minimum }) {
             throw SafetyError.invalidTable("\(flat.prm) has no range")
+        }
+        if let guarded = map.table.parameters.first(where: { $0.guarded && $0.louder != .up }) {
+            throw SafetyError.invalidTable("\(guarded.prm) is guarded but does not get louder upwards")
         }
         self.session = session
         self.map = map
@@ -184,20 +191,27 @@ public actor SafetyGuard {
         guard panics == panicsBefore else { throw SafetyError.overtakenByPanic }
         guard !stopped else { throw SafetyError.notReady }
         sync(with: snapshot)
-        guard snapshot.isValid, let view = snapshot.views[known.offset], let lowest = lowestPossible(known, view) else {
+        guard snapshot.isValid, let view = snapshot.views[known.offset], let quietest = quietestPossible(known, view),
+            let loudest = loudestPossible(known, view)
+        else {
             throw SafetyError.notReady
         }
-        if known.kind == .numeric {
-            if value > lowest, let ceiling = ceiling(of: known), value > ceiling {
+        if known.kind != .numeric {
+            try softSwitch(known, to: value, snapshot)
+        } else {
+            if loudness(value, known) > loudness(quietest, known), let ceiling = ceiling(of: known), value > ceiling {
                 throw SafetyError.aboveCeiling(known.prm, value: value, ceiling: ceiling)
             }
-            if known == volumeKnob {
-                volumeRestore = nil
+            if known.switchesEffectOffBelowZero, value >= 0 ? quietest < 0 : loudest >= 0 {
+                // The effect goes on or off: a soft switch, and once on, a ramp the rest of the way.
+                try softSwitch(known, to: min(value, 0), snapshot, then: value > 0 ? value : nil)
+            } else {
+                if known == volumeKnob {
+                    volumeRestore = nil
+                }
+                seenReports[known.offset] = view.reportCount
+                targets[known.offset] = value
             }
-            seenReports[known.offset] = view.reportCount
-            targets[known.offset] = value
-        } else {
-            try softSwitch(known, to: value, snapshot)
         }
         startPump()
     }
@@ -262,14 +276,16 @@ public actor SafetyGuard {
         await withCheckedContinuation { idleWaiters.append($0) }
     }
 
-    private func softSwitch(_ parameter: Parameter, to value: Int, _ snapshot: AmpSession.GuardSnapshot) throws {
+    private func softSwitch(
+        _ parameter: Parameter, to value: Int, _ snapshot: AmpSession.GuardSnapshot, then: Int? = nil
+    ) throws {
         guard let current = snapshot.views[parameter.offset]?.value, let volumeView = snapshot.views[volumeKnob.offset],
-            let lowestVolume = lowestPossible(volumeKnob, volumeView),
-            let highestVolume = highestPossible(volumeKnob, volumeView)
+            let lowestVolume = quietestPossible(volumeKnob, volumeView),
+            let highestVolume = loudestPossible(volumeKnob, volumeView)
         else {
             throw SafetyError.notReady
         }
-        guard value != current else { return }
+        guard value != current || then != nil else { return }
         let restore = volumeRestore ?? targets[volumeKnob.offset] ?? lowestVolume
         let ceiling = ceiling(of: volumeKnob) ?? volumeKnob.maximum
         guard highestVolume <= ceiling, restore <= ceiling else {
@@ -278,11 +294,13 @@ public actor SafetyGuard {
         volumeRestore = restore
         seenReports[volumeKnob.offset] = volumeView.reportCount
         targets[volumeKnob.offset] = restore
+        targets[parameter.offset] = nil
         urgent.append(
             Write(parameter: volumeKnob, value: 0, priority: .high, basis: snapshot.basis([volumeKnob])))
         switches.append(
             Write(
-                parameter: parameter, value: value, priority: .normal, basis: snapshot.basis([volumeKnob, parameter])))
+                parameter: parameter, value: value, priority: .normal, basis: snapshot.basis([volumeKnob, parameter]),
+                then: then))
     }
 
     private func startPump() {
@@ -335,6 +353,10 @@ public actor SafetyGuard {
                 written[offset] = Written(
                     value: write.value, time: now, reportCount: write.basis.reportCounts[write.parameter] ?? 0)
                 lastWriteTime[offset] = now
+                if let then = write.then {
+                    seenReports[offset] = write.basis.reportCounts[write.parameter] ?? 0
+                    targets[offset] = then
+                }
             } else {
                 statistics["dropped", default: 0] += 1
                 logger.notice("write to \(write.parameter.prm, privacy: .public) dropped: the amp changed first")
@@ -363,13 +385,13 @@ public actor SafetyGuard {
         // The change of a soft switch follows its dip directly, which keeps the silence short.
         while !switches.isEmpty {
             let write = switches.removeFirst()
-            if let volume = snapshot.views[volumeKnob.offset], highestPossible(volumeKnob, volume) == 0 {
+            if let volume = snapshot.views[volumeKnob.offset], loudestPossible(volumeKnob, volume) == 0 {
                 return write
             }
             logger.notice("switch of \(write.parameter.prm, privacy: .public) dropped: VOLUME is not at 0")
         }
-        var decreases: [Write] = []
-        var increases: [Write] = []
+        var quieter: [Write] = []
+        var steps: [Write] = []
         for (offset, target) in targets.sorted(by: { $0.key < $1.key }) {
             guard let parameter = map.parameter(atOffset: offset), let view = snapshot.views[offset] else { continue }
             if view.reportCount != seenReports[offset] {
@@ -378,26 +400,30 @@ public actor SafetyGuard {
                 finish(offset)
                 continue
             }
-            guard let lowest = lowestPossible(parameter, view), let highest = highestPossible(parameter, view) else {
+            guard let quietest = quietestPossible(parameter, view), let loudest = loudestPossible(parameter, view)
+            else {
                 continue
             }
             let basis = snapshot.basis([parameter])
-            if target < lowest || (target == lowest && highest > lowest) {
-                // Below every value the amp may hold, so a real decrease.
-                decreases.append(Write(parameter: parameter, value: target, priority: .high, basis: basis))
-            } else if target == lowest {
+            let goal = loudness(target, parameter)
+            let low = loudness(quietest, parameter)
+            if goal < low || (goal == low && loudness(loudest, parameter) > low) {
+                // Quieter than every value the amp may hold.
+                quieter.append(Write(parameter: parameter, value: target, priority: .high, basis: basis))
+            } else if goal == low {
                 finish(offset)
-            } else if !parameter.guarded {
-                increases.append(Write(parameter: parameter, value: target, priority: .normal, basis: basis))
-            } else if let ceiling = ceiling(of: parameter), lowest + 1 > ceiling {
+            } else if parameter.louder == nil {
+                steps.append(Write(parameter: parameter, value: target, priority: .normal, basis: basis))
+            } else if let ceiling = ceiling(of: parameter), quietest + 1 > ceiling {
                 logger.notice("\(parameter.prm, privacy: .public) reached its ceiling; ramp stopped")
                 finish(offset)
             } else if isDue(parameter) {
-                // One step above the lowest value the amp may hold.
-                increases.append(Write(parameter: parameter, value: lowest + 1, priority: .normal, basis: basis))
+                // One step louder than the quietest value the amp may hold.
+                let step = parameter.louder == .down ? quietest - 1 : quietest + 1
+                steps.append(Write(parameter: parameter, value: step, priority: .normal, basis: basis))
             }
         }
-        return decreases.first ?? increases.first
+        return quieter.first ?? steps.first
     }
 
     // Brings the guard's state up to date with the session: a new channel generation ends all work, and a report
@@ -481,8 +507,8 @@ public actor SafetyGuard {
         suspects[parameter.offset] = nil
         // The read is the truth now.
         written[parameter.offset] = nil
-        guard !stopped, parameter.guarded, parameter.kind == .numeric, refreshed.value == suspect.written,
-            let reference, reference < refreshed.value
+        guard !stopped, parameter.louder != nil, parameter.kind == .numeric, refreshed.value == suspect.written,
+            let reference, loudness(reference, parameter) < loudness(refreshed.value, parameter)
         else {
             return
         }
@@ -537,15 +563,20 @@ public actor SafetyGuard {
         return values
     }
 
-    private func lowestPossible(_ parameter: Parameter, _ view: AmpSession.GuardView) -> Int? {
-        possibleValues(parameter, view).min()
+    // Values in loudness order: a parameter that gets louder downwards counts by its negated value.
+    private func loudness(_ value: Int, _ parameter: Parameter) -> Int {
+        parameter.louder == .down ? -value : value
     }
 
-    private func highestPossible(_ parameter: Parameter, _ view: AmpSession.GuardView) -> Int? {
-        possibleValues(parameter, view).max()
+    private func quietestPossible(_ parameter: Parameter, _ view: AmpSession.GuardView) -> Int? {
+        possibleValues(parameter, view).min { loudness($0, parameter) < loudness($1, parameter) }
     }
 
-    // When the next rising step of a guarded parameter may go out; `nil` if it never was written, so it may go now.
+    private func loudestPossible(_ parameter: Parameter, _ view: AmpSession.GuardView) -> Int? {
+        possibleValues(parameter, view).max { loudness($0, parameter) < loudness($1, parameter) }
+    }
+
+    // When the next step of a ramp may go out; `nil` if the parameter never was written, so it may go now.
     private func dueTime(of parameter: Parameter) -> ContinuousClock.Instant? {
         lastWriteTime[parameter.offset]?.advanced(by: rampDuration / (parameter.maximum - parameter.minimum))
     }
@@ -557,7 +588,7 @@ public actor SafetyGuard {
 
     private func nextDeadline() -> ContinuousClock.Instant? {
         let now = clock.now
-        var deadlines = targets.keys.compactMap { map.parameter(atOffset: $0) }.filter(\.guarded).map {
+        var deadlines = targets.keys.compactMap { map.parameter(atOffset: $0) }.filter { $0.louder != nil }.map {
             dueTime(of: $0) ?? now
         }
         deadlines += written.values.map { $0.time.advanced(by: Self.crossingWindow) }.filter { $0 > now }

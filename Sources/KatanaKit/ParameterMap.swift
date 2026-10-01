@@ -32,6 +32,9 @@ public struct Parameter: Codable, Sendable, Hashable {
     public let initial: Int?
     /// Whether the parameter can raise loudness and falls under the safety ceiling (design spec, section 5.2).
     public let guarded: Bool
+    /// The direction in which the parameter makes the amp louder; changes that way are ramped (design spec, section
+    /// 5.2). Every guarded parameter gets louder upwards; a few unguarded ones, like the limiter's ratio, downwards.
+    public let louder: Direction?
     /// Whether a Tone Studio control writes the parameter; Tanto writes nothing else (design spec, section 3.5). The
     /// patch name is `false` here, yet renaming writes it, as Tone Studio's WRITE dialog does.
     public let written: Bool
@@ -49,6 +52,14 @@ public struct Parameter: Codable, Sendable, Hashable {
     public let format: DisplayFormat?
     /// The parameter is shown only while all of these hold; `nil` means always.
     public let visibleWhen: [Condition]?
+
+    /// A direction of change.
+    public enum Direction: String, Codable, Sendable {
+        /// Towards the maximum.
+        case up
+        /// Towards the minimum.
+        case down
+    }
 
     /// How a parameter is edited; switches and pickers get the soft switch (design spec, section 5.3).
     public enum Kind: String, Codable, Sendable {
@@ -96,6 +107,12 @@ public struct Parameter: Codable, Sendable, Hashable {
         case offBelowZero
         /// `50%`.
         case percent
+    }
+
+    /// Whether values below zero switch an effect off: the BOOSTER, MOD, FX, DELAY and REVERB knobs. Crossing zero
+    /// switches the effect on or off, which goes through the soft switch (design spec, section 5.2).
+    public var switchesEffectOffBelowZero: Bool {
+        guarded && format == .offBelowZero
     }
 
     /// Converts a raw value to the displayed value.
