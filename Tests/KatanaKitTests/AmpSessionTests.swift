@@ -11,13 +11,23 @@ private let quickTimeout = SessionTiming(spacing: .milliseconds(20), readTimeout
     #expect(info.deviceID == 0x00)
     #expect(info.modelCode == 0x06)
     #expect(info.communicationLevel == 8)
-    #expect(info.communicationRevision == 1)
     #expect(
         amp.received.map(\.message) == [
             SysEx.identityRequest,
             SysEx.rq1(.editorCommunicationLevel, size: 1, deviceID: 0x00),
             SysEx.dt1(.editorCommunicationMode, data: [1], deviceID: 0x00),
-            SysEx.rq1(.editorCommunicationRevision, size: 1, deviceID: 0x00),
+        ])
+}
+
+@Test func connectRefusesOtherCommunicationLevelsBeforeEditorMode() async throws {
+    let amp = SimulatedAmp(map: try .bundled())
+    amp.setMemory([9], at: .editorCommunicationLevel)
+    await #expect(throws: AmpError.unsupportedCommunicationLevel(9)) {
+        try await AmpSession(transport: amp).connect()
+    }
+    #expect(
+        amp.received.map(\.message) == [
+            SysEx.identityRequest, SysEx.rq1(.editorCommunicationLevel, size: 1, deviceID: 0x00),
         ])
 }
 
@@ -39,7 +49,7 @@ private let quickTimeout = SessionTiming(spacing: .milliseconds(20), readTimeout
     let data = try await session.read(start, size: 300)
     #expect(data == amp.memory(at: start, count: 300))
     #expect(
-        amp.received.dropFirst(4).map(\.message) == [
+        amp.received.dropFirst(3).map(\.message) == [
             SysEx.rq1(start, size: 128, deviceID: 0x00),
             SysEx.rq1(start.advanced(by: 128), size: 128, deviceID: 0x00),
             SysEx.rq1(start.advanced(by: 256), size: 44, deviceID: 0x00),
@@ -52,7 +62,7 @@ private let quickTimeout = SessionTiming(spacing: .milliseconds(20), readTimeout
     _ = try await session.connect()
     _ = try await session.read(.temporaryPatch, size: 300)
     let times = amp.received.map(\.time)
-    #expect(times.count == 7)
+    #expect(times.count == 6)
     for (earlier, later) in zip(times, times.dropFirst()) {
         #expect(later - earlier >= .milliseconds(20))
     }
@@ -67,7 +77,7 @@ private let quickTimeout = SessionTiming(spacing: .milliseconds(20), readTimeout
         try await session.read(.temporaryPatch, size: 16)
     }
     #expect(
-        amp.received.dropFirst(4).map(\.message)
+        amp.received.dropFirst(3).map(\.message)
             == Array(repeating: SysEx.rq1(.temporaryPatch, size: 16, deviceID: 0x00), count: 2))
 }
 

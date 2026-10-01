@@ -66,8 +66,6 @@ extension Address {
     public static let editorCommunicationLevel = Address(packed: 0x7F00_0000)
     /// Editor communication mode: 1 = on, 0 = off.
     public static let editorCommunicationMode = Address(packed: 0x7F00_0001)
-    /// Editor communication revision, one byte.
-    public static let editorCommunicationRevision = Address(packed: 0x7F00_0003)
 
     /// The base address of stored patch `slot`.
     ///

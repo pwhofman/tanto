@@ -6,6 +6,8 @@ public enum AmpError: Error, Equatable, Sendable {
     case notAKatana([UInt8])
     /// No identity reply arrived, also not after one retry.
     case noIdentityReply
+    /// The amp's editor communication level is not 8, the level Tone Studio requires.
+    case unsupportedCommunicationLevel(UInt8)
     /// No reply arrived for a read at this address, also not after one retry.
     case timeout(Address)
 }
@@ -14,10 +16,8 @@ public enum AmpError: Error, Equatable, Sendable {
 public struct ConnectionInfo: Equatable, Sendable {
     /// The identity reply, from `F0` to `F7`.
     public let identityReply: [UInt8]
-    /// Editor communication level (Tone Studio's own level is 8).
+    /// Editor communication level; always 8, the only level Tone Studio accepts.
     public let communicationLevel: UInt8
-    /// Editor communication revision.
-    public let communicationRevision: UInt8
 
     /// The amp's device ID: byte 2 of the identity reply.
     public var deviceID: UInt8 { identityReply[2] }
@@ -107,20 +107,21 @@ public actor AmpSession {
         changesContinuation.finish()
     }
 
-    /// Runs Tone Studio's connect sequence: identity request, editor communication level, editor mode on, revision.
-    /// Like Tone Studio, all later messages use the device ID from the identity reply.
+    /// Runs Tone Studio's connect sequence: identity request, editor communication level, editor mode on. Like Tone
+    /// Studio, all later messages use the device ID from the identity reply, and a level other than 8 stops the
+    /// sequence before editor mode is switched on.
     ///
     /// - Returns: What the amp reported.
-    /// - Throws: `AmpError` if the amp does not answer or is not a Katana MkII.
+    /// - Throws: `AmpError` if the amp does not answer, is not a Katana MkII or uses another communication level.
     public func connect() async throws -> ConnectionInfo {
         startListening()
         let identity = try await request(SysEx.identityRequest, expecting: .identityReply)
         guard SysEx.isKatanaIdentityReply(identity) else { throw AmpError.notAKatana(identity) }
         deviceID = identity[2]
         let level = try await read(.editorCommunicationLevel, size: 1)[0]
+        guard level == 8 else { throw AmpError.unsupportedCommunicationLevel(level) }
         try await sendCommand(SysEx.dt1(.editorCommunicationMode, data: [1], deviceID: deviceID))
-        let revision = try await read(.editorCommunicationRevision, size: 1)[0]
-        return ConnectionInfo(identityReply: identity, communicationLevel: level, communicationRevision: revision)
+        return ConnectionInfo(identityReply: identity, communicationLevel: level)
     }
 
     /// Switches editor mode off.

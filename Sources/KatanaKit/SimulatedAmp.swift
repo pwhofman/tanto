@@ -34,8 +34,8 @@ public final class SimulatedAmp: MIDITransport {
 
     /// Creates a simulated amp whose nine stored patches and live patch hold the table's initial values.
     ///
-    /// Stored patches are named `SIM PATCH 0` to `SIM PATCH 8`, the live patch `SIM LIVE`. The current channel is A1,
-    /// the editor communication level 8 and the revision 1.
+    /// Stored patches are named `SIM PATCH 0` to `SIM PATCH 8`, the live patch `SIM LIVE`. The current channel is A1
+    /// and the editor communication level 8.
     ///
     /// - Parameters:
     ///   - map: Layout used to fill the patches.
@@ -62,7 +62,6 @@ public final class SimulatedAmp: MIDITransport {
         memory[Address.currentPatchNumber.linear] = 0
         memory[Address.currentPatchNumber.linear + 1] = 1
         memory[Address.editorCommunicationLevel.linear] = 8
-        memory[Address.editorCommunicationRevision.linear] = 1
         state = Mutex(State(memory: memory, identityReply: identityReply))
     }
 
@@ -108,6 +107,19 @@ public final class SimulatedAmp: MIDITransport {
     /// - Returns: The bytes.
     public func memory(at address: Address, count: Int) -> [UInt8] {
         state.withLock { state in (0..<count).map { state.memory[address.linear + $0] ?? 0 } }
+    }
+
+    /// Changes simulated memory without telling Tanto, e.g. to prepare a test.
+    ///
+    /// - Parameters:
+    ///   - bytes: New memory content.
+    ///   - address: Where it starts.
+    public func setMemory(_ bytes: [UInt8], at address: Address) {
+        state.withLock { state in
+            for (index, byte) in bytes.enumerated() {
+                state.memory[address.linear + index] = byte
+            }
+        }
     }
 
     /// Simulates a change made on the amp itself: stores `bytes` and sends them to Tanto as a DT1.
