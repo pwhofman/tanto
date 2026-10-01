@@ -59,6 +59,8 @@ public final class EditorModel {
     @ObservationIgnored private var session: AmpSession?
     @ObservationIgnored private var safety: SafetyGuard?
     @ObservationIgnored private var updatesTask: Task<Void, Never>?
+    @ObservationIgnored private var retryTask: Task<Void, Never>?
+    @ObservationIgnored private var retries = 0
 
     /// Creates a model that is not connected.
     ///
@@ -106,6 +108,67 @@ public final class EditorModel {
         } catch {
             connection = .failed(Self.message(for: error))
         }
+    }
+
+    /// Keeps the model connected while the amp's port is there. It connects when the port appears, tries again a few
+    /// times when the amp does not answer yet, and forgets the connection without sending anything when the port
+    /// disappears (design spec, section 8). Runs until the calling task is cancelled.
+    ///
+    /// - Parameters:
+    ///   - ports: Where the amp appears.
+    ///   - timing: Message spacing and read timeout.
+    ///   - retryDelay: The wait before another try after a failed connect.
+    public func follow(_ ports: any AmpPorts, timing: SessionTiming = .katana, retryDelay: Duration = .seconds(2)) async
+    {
+        await refresh(ports, timing: timing, retryDelay: retryDelay)
+        for await _ in ports.changes {
+            retries = 0
+            await refresh(ports, timing: timing, retryDelay: retryDelay)
+        }
+        retryTask?.cancel()
+    }
+
+    private func refresh(_ ports: any AmpPorts, timing: SessionTiming, retryDelay: Duration) async {
+        guard !Task.isCancelled else { return }
+        guard ports.isPresent else {
+            if connection != .notConnected {
+                forget()
+            }
+            return
+        }
+        switch connection {
+        case .connecting, .connected:
+            return
+        case .notConnected, .failed:
+            break
+        }
+        do {
+            guard let transport = try ports.open() else { return }
+            await connect(transport, timing: timing)
+        } catch {
+            connection = .failed(Self.message(for: error))
+        }
+        guard case .failed = connection, retries < 5 else { return }
+        retries += 1
+        retryTask?.cancel()
+        retryTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: retryDelay)
+            } catch {
+                return  // cancelled: a newer change or the end of `follow` took over
+            }
+            await self?.refresh(ports, timing: timing, retryDelay: retryDelay)
+        }
+    }
+
+    // The amp is gone: drop the connection without sending anything.
+    private func forget() {
+        updatesTask?.cancel()
+        updatesTask = nil
+        retryTask?.cancel()
+        session = nil
+        safety = nil
+        connection = .notConnected
     }
 
     /// Switches editor mode off, if the amp is still there, and forgets the connection.
