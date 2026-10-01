@@ -183,6 +183,9 @@ Patch-name edits are not soft-switched.
 - Renaming writes the 16-character name field. The sound does not change.
 - Restore asks you to turn MASTER to minimum first, writes channels 1–8, and selects no channel afterwards.
 
+Hardware check 1 showed that saved channels exceed the ceiling (B2 has amp VOLUME 88). The user chose to keep the rules
+above unchanged: every switch to such a channel asks first, and effect switches there need amp VOLUME below the ceiling.
+
 ### 5.5 Panic
 
 Toolbar button and the Esc key. Panic clears the outgoing queue, cancels all ramps and sends amp VOLUME (`60 00 00 28`)
