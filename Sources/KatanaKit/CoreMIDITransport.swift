@@ -72,7 +72,7 @@ public final class CoreMIDITransport: MIDITransport {
     ///
     /// - Parameter endpoints: All sources or all destinations.
     /// - Returns: `true` if an endpoint is named "KATANA".
-    static func hasMainPort(in endpoints: [MIDIEndpoint]) -> Bool {
+    public static func hasMainPort(in endpoints: [MIDIEndpoint]) -> Bool {
         endpoints.contains(where: isMainPort)
     }
 

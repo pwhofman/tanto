@@ -179,7 +179,20 @@ func runCheck2(_ step: String, session: AmpSession, map: ParameterMap) async thr
     try await report("after")
 }
 
+/// Whether the amp's main port is there in both directions.
+func ampIsPresent() -> Bool {
+    CoreMIDITransport.hasMainPort(in: CoreMIDITransport.sources())
+        && CoreMIDITransport.hasMainPort(in: CoreMIDITransport.destinations())
+}
+
 func run(_ options: Options) async throws {
+    if options.connect {
+        // MIDIServer quits a few seconds after its last client has gone; when this run starts it again, the amp's ports
+        // come back a moment later.
+        for _ in 0..<30 where !ampIsPresent() {
+            try await Task.sleep(for: .milliseconds(100))
+        }
+    }
     print("MIDI sources:      \(CoreMIDITransport.sources().map(\.name))")
     print("MIDI destinations: \(CoreMIDITransport.destinations().map(\.name))")
     guard options.connect else { return }
