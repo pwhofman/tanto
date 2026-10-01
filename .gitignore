@@ -1,0 +1,24 @@
+# macOS
+.DS_Store
+
+# Swift Package Manager and Xcode
+/.build/
+/.swiftpm/
+xcuserdata/
+DerivedData/
+
+# App bundle produced by scripts/build-app.sh
+/build/
+
+# Python tooling in tools/
+__pycache__/
+.venv/
+.ruff_cache/
+.pytest_cache/
+
+# Personal scratch files
+/scratch/
+
+# Amp backups and probe logs contain personal patch data
+*.tanto-backup.json
+*.probe-log.txt

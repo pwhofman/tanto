@@ -1,0 +1,339 @@
+# Tanto: Katana MkII editor for macOS — design
+
+Date: 2026-10-01. Status: approved in brainstorming, awaiting spec review.
+
+## 1. Goal
+
+A macOS app that replaces BOSS TONE STUDIO for KATANA MkII (v2.1.0, Intel-only) for a Katana-100 MkII connected over
+USB. It starts like any other Mac app (double-click `Tanto.app`). The first version favours function over looks: native
+sliders, toggles and pop-up menus.
+
+Hard requirement: the app must never cause a sudden loud sound. Section 5 defines how.
+
+## 2. Scope
+
+v1:
+
+- Live editing of the current sound.
+- Patch librarian: channel list, channel switching, saving the live sound to a channel, renaming, backup and restore.
+
+Later milestones, each with its own spec: `.tsl` tone files; global settings and controller assignments (knob,
+expression pedal, GA-FC, footswitch functions); visual design.
+
+Not planned: BOSS Tone Central/Exchange browsing, firmware updates, audio over USB.
+
+## 3. Verified facts
+
+### 3.1 Machine
+
+Apple Silicon Mac, macOS 27.0.1, Swift 6.4 from the Command Line Tools (includes Swift Testing). Xcode is being installed.
+
+### 3.2 USB and driver
+
+- The amp enumerates as `KATANA` (vendor BOSS, VID `0x0582`, PID `0x01D8`), device class `0xFF`, four interfaces.
+  Interfaces 0–2 carry audio and are served by `/Library/Audio/Plug-Ins/HAL/RDUSB01D8Audio.driver`. Interface 3 carries
+  MIDI and is claimed by MIDIServer through `/Library/Audio/MIDI Drivers/RDUSB01D8Midi.plugin` (v1.0.4, universal
+  arm64/x86_64).
+- The Boss driver is a prerequisite. With it, the amp is an ordinary CoreMIDI device. The endpoint names were not
+  captured because the amp was switched off; hardware check 1 records them.
+
+### 3.3 Protocol
+
+Sources in Tone Studio's `Contents/Resources/html/js/`: `config/product_setting.js`, `businesslogic/bts/address_const.js`,
+`businesslogic/bts/midi_connect_controller.js`, `utilities/converter.js`, `utilities/constant.js`.
+
+- Roland SysEx with device ID `10` and model ID `00 00 00 33`:
+  - RQ1 (read): `F0 41 10 00 00 00 33 11 a3 a2 a1 a0 s3 s2 s1 s0 cs F7`
+  - DT1 (write): `F0 41 10 00 00 00 33 12 a3 a2 a1 a0 d… cs F7`
+  - `cs = (128 − (sum of address and size/data bytes) mod 128) mod 128`
+- Identity request: `F0 7E 7F 06 01 F7`. Tone Studio accepts a reply whose bytes 0–1 are `F0 7E` and bytes 3–7 are
+  `06 02 41 33 03`.
+- Tone Studio leaves 20 ms between outgoing messages, splits reads into chunks of at most 128 data bytes
+  (`SYSEX_MAXLEN`) and times out reads after 15 s. Tanto uses the same 128-byte limit for writes.
+- Tone Studio's connect sequence: identity request; RQ1 `7F 00 00 00` (editor communication level, 1 byte; Tone
+  Studio's own level is 8); DT1 `7F 00 00 01` = `01` (editor communication mode on); RQ1 `7F 00 00 03` (editor
+  communication revision, 1 byte). On disconnect it sends DT1 `7F 00 00 01` = `00`.
+- Addresses are four 7-bit bytes. Offsets are added in linear space, `linear = a3·2²¹ + a2·2¹⁴ + a1·2⁷ + a0`
+  (Tone Studio's `nibble()`), and converted back afterwards.
+- Value encodings, big-endian: `INTEGER1x7` one byte; `INTEGER2x7` two bytes of 7 bits; `INTEGER2x4` two bytes of 4 bits;
+  `INTEGER4x4` four bytes of 4 bits. Displayed value = raw value − `ofs`.
+
+### 3.4 Memory map
+
+| Address       | Content                                                                    | v1                      |
+|---------------|----------------------------------------------------------------------------|-------------------------|
+| `00 00 00 00` | System: global EQ, line out, USB levels, cab EQ, power adjust              | not touched             |
+| `00 01 00 00` | Current patch number, `INTEGER2x7`, 0–8                                     | read                    |
+| `00 02 00 00` | MIDI settings                                                              | not touched             |
+| `10 0n 00 00` | Stored patch n, n = 0…8: 0 = PANEL, 1–4 = A1–A4, 5–8 = B1–B4                | read; write n = 1…8     |
+| `60 00 00 00` | Live (temporary) patch                                                     | read and write          |
+| `7F 00 01 00` | Patch select, DT1 `00 nn`                                                  | write                   |
+| `7F 00 01 04` | Patch write (store the live patch in n), DT1 `00 nn`; the amp answers with a DT1 on the same address | write |
+
+PANEL is read and shown but never written, as in Tone Studio (`businesslogic/ktn/model_info.js`, `transferablePatch`).
+
+Patch layout, as offsets from the patch base: name `00 00` (16 ASCII characters); `Patch_0` `00 10` (booster, amp,
+EQ 1); `Eq(2)` `00 60`; `Fx(1)` `01 00` (MOD); `Fx(2)` `03 00` (FX); `Delay(1)` `05 00`; `Delay(2)` `05 20`; `Patch_1`
+`05 40` (reverb, pedal FX, foot volume, send/return, noise suppressor, solo, contour); `Patch_2` `06 20` (chain, block
+positions, variation colours, cabinet resonance); `Status` `06 50`; controller assignments `07 00`–`0F 08`;
+`Patch_Mk2V2` `0F 10` (solo EQ and solo delay); `Contour(1)`–`Contour(3)` `0F 30`, `0F 38`, `0F 40`.
+
+### 3.5 Parameter data
+
+Tone Studio 2.1.0 ships its parameter definitions as plain files under `Contents/Resources/html/`:
+
+- `js/config/address_map.js`: address, encoding, offset, range, name and internal id (`PRM_…`) of every parameter.
+- `export/item.json`: for each UI control, the parameter it edits (e.g. `Temporary%Delay(1)%2`) and its value formatter.
+- `export/layout.div`: option labels (e.g. the booster types CLEAN BOOST, TREBLE BOOST, MID BOOST, …) and display
+  formats.
+
+A generator run by the developer (`tools/gen_parameter_map.py`, run with `uv`) turns these into Tanto's parameter table,
+`Sources/KatanaKit/Resources/parameters.json`, which is committed. The app never reads Tone Studio's files at runtime.
+Only facts are taken over (addresses, ranges, labels), not Roland's code. KatanaFxFloorBoard
+(sourceforge.net/projects/fxfloorboard) is a fallback reference for unclear labels.
+
+The editor exposes exactly the parameters that Tone Studio's UI exposes. About 50 entries in `address_map.js` have no
+name. They are exposed only if Tone Studio shows them, and are never written otherwise.
+
+## 4. Architecture
+
+One Swift package with two parts:
+
+- `KatanaKit`: library without UI. All protocol, state and safety logic, unit-tested with Swift Testing (`swift test`).
+- `Tanto`: SwiftUI app, a thin layer over `KatanaKit`.
+
+| Component           | Responsibility                                                                                     |
+|---------------------|----------------------------------------------------------------------------------------------------|
+| `SysEx`             | Encodes and decodes identity, RQ1 and DT1 messages; checksum; 7-bit address arithmetic; value encodings. |
+| `ParameterMap`      | Loads `parameters.json`: section, block, address, encoding, range, offset, label, option labels, formatter, kind (numeric, switch, picker, text) and the `guarded` flag. |
+| `MIDITransport`     | Protocol with two implementations. `CoreMIDITransport` finds the amp's endpoints, sends, receives and reports plug/unplug. `SimulatedAmp` is an in-memory amp with the same memory map: it answers RQ1 and DT1, sends change notifications and records every message it receives. |
+| `AmpSession` (actor) | Connect and disconnect, outgoing queue (at least 20 ms between messages, priority lane for decreases and Panic), read timeouts, mirror of the amp's memory, change stream for the UI. |
+| `SafetyGuard`       | The only path from a user action to a parameter write (section 5).                                 |
+| `Librarian`         | Channel names, cache of stored patches, select, save, rename, backup, restore.                      |
+
+Swift 6 language mode with strict concurrency. UI state is an `@Observable` model on the main actor, fed by
+`AmpSession`'s change stream.
+
+Data flow:
+
+- Connect: identity request, editor mode on, then reads of the current patch number, the live patch and, in the
+  background, the 9 stored patches. Apart from the editor-mode flag, connecting only reads.
+- Edit: control → `SafetyGuard` → queue → DT1 to `60 00 …` → mirror.
+- Amp to app: with editor mode on, the amp sends DT1 messages for changes made on the amp. The mirror and the UI follow;
+  no write is triggered. On a channel change the live patch is re-read. Tone Studio's handler for current-patch-number
+  messages is commented out in 2.1.0, so hardware check 1 establishes which message signals a channel change.
+- Quit or disconnect: editor mode off.
+
+## 5. Safety
+
+### 5.1 Always on
+
+1. No automatic writes. Launch, connect and reconnect only read, apart from the editor-mode flag. Messages from the amp
+   never trigger a write.
+2. Every outgoing DT1 is one of: a parameter write that `SafetyGuard` produced from a user action; a whitelisted command
+   (`7F 00 00 01` editor mode, `7F 00 01 00` patch select, `7F 00 01 04` patch write); a librarian write (save, rename,
+   restore) after confirmation.
+3. Validation before sending: the address belongs to `ParameterMap`, the value is within range, the encoding and the
+   checksum are correct. Anything else is refused and logged. The UI has no way to send raw SysEx.
+4. At most one message per 20 ms. A slider drag sends only its latest value.
+
+### 5.2 Guarded parameters
+
+A parameter is guarded if it is numeric and its internal id or Tone Studio label contains LEVEL, VOLUME, GAIN, DRIVE,
+FEEDBACK, RESONANCE, SUSTAIN, DIRECT, REGEN, ECHO INTENSITY or PEAK, or if it is a graphic-EQ band. Selectors whose names
+match (`FXBOX_*` variation settings, CABINET RESONANCE) are pickers and follow 5.3. Tone controls (BASS, MIDDLE, TREBLE,
+PRESENCE, booster TONE and BOTTOM), times, rates and depths are not guarded. Appendix A lists the 210 parameters this
+rule selects from `address_map.js`.
+
+- Ceiling: `ceiling = min + ⌊f · (max − min)⌋` with f = 50 % by default. f is set in Settings from 0 % to 100 % in 5 %
+  steps; raising it asks for confirmation. At 50 %: amp VOLUME 50, GAIN 60, delay EFFECT LEVEL 60, EQ gains and levels
+  0 dB.
+- A requested value above the ceiling and above the current value is refused with a message at the control, and the
+  control returns to the amp's value. Values are never clipped silently.
+- A value that is already above the ceiling (set on the amp, or stored in a patch) is shown with a warning. It can be
+  lowered but not raised.
+- Increases are ramped in steps of one raw unit, at least `2 s / (max − min)` apart, so a full sweep takes at least 2 s.
+  The 20 ms pacing can only make a ramp slower.
+- Decreases take the next message slot through the priority lane, ahead of queued increases, and cancel any ramp of the
+  same parameter. The 20 ms spacing applies to every message, including priority ones.
+
+### 5.3 Switches and pickers
+
+Switches and pickers in the sound path (block on/off, amp type, effect types, variation colours and their assignments,
+chain, block positions, contour, cabinet resonance) use a soft switch:
+
+1. If amp VOLUME is above the ceiling, the change is refused with the message "Lower amp VOLUME below the ceiling first".
+2. Amp VOLUME is set to 0 at once.
+3. The change is sent.
+4. Amp VOLUME ramps back to its previous value under the rules of 5.2.
+
+Patch-name edits are not soft-switched.
+
+### 5.4 Channels and memory
+
+- Switching channels from the app: if a guarded value stored in the target channel is above its ceiling, a dialog lists
+  those values and asks first, with Cancel as the default button. If the live patch has unsaved edits made in the app, a
+  dialog asks before discarding them. Otherwise the switch happens directly, as with the amp's own channel buttons. A
+  channel switch cannot be faded, because the amp loads the stored volume at once.
+- Saving the live sound to channel n (1–8) asks before overwriting. The sound does not change.
+- Renaming writes the 16-character name field. The sound does not change.
+- Restore asks you to turn MASTER to minimum first, writes channels 1–8, and selects no channel afterwards.
+
+### 5.5 Panic
+
+Toolbar button and the Esc key. Panic clears the outgoing queue, cancels all ramps and sends amp VOLUME (`60 00 00 28`)
+= 0 and FOOT VOLUME (`60 00 05 61`) = 0 in the next two message slots. Both stay at 0 until raised by hand, which
+is ramped and limited by the ceiling. Panic changes only the live patch; stored channels are untouched.
+
+### 5.6 Outside the app's control
+
+The amp's MIDI map has no MASTER or POWER CONTROL parameter. Both stay hardware-only and remain the final safety limit.
+Changes made with the amp's own knobs and buttons are shown in the app, with a warning when a guarded value exceeds its
+ceiling.
+
+### 5.7 Development on the real amp
+
+- Development and automated tests use `SimulatedAmp`.
+- Every interaction with the real amp is announced in chat first. Sessions that send anything beyond reads and the
+  editor-mode flag need your explicit OK and MASTER at minimum.
+- The first write tests are silent (renaming the live patch) or lower the volume.
+- Audible checks (ramp, Panic) happen only at a MASTER level you choose.
+
+## 6. UI (v1)
+
+One window:
+
+- Toolbar: connection status, current channel, Panic.
+- Sidebar: PANEL, A1–A4 and B1–B4 with their names; the current channel is highlighted; clicking a channel switches to
+  it (5.4). Context menu: "Save Live Sound Here…", "Rename…". Backup and Restore are in the File menu.
+- Editor: the patch name, then the sections Booster, Amp, Mod, FX, Delay, Delay 2, Reverb, EQ 1, EQ 2, Pedal FX, Noise
+  Suppressor, Send/Return, Solo, Foot Volume, Contour, Chain. Each section shows its on/off switch, its variation colour
+  and type where it has them, and then the parameters of the selected type. Sections and the parameters per type follow
+  Tone Studio's UI grouping; its control ids carry a section prefix such as `booster-` or `delay2-`. After a variation
+  colour change the app re-reads the section, so the display shows what the amp actually did.
+- Controls: numeric parameters are sliders with the value in display units (formatters from `layout.div`, e.g. `+3`,
+  `320 ms`); switches are toggles; pickers are pop-up menus. Guarded sliders show the ceiling.
+- Settings window: the ceiling percentage.
+
+## 7. Librarian
+
+- Cache: after connecting, the stored patches are read in the background; 5.4 and backups depend on them. A channel is
+  re-read when the amp reports a patch write.
+- Backup: channels 1–8 go into a JSON file, `<name>.tanto-backup.json`:
+  `{"format": 1, "model": "KATANA MkII", "created": <ISO 8601>, "revision": <editor revision>,
+  "channels": [{"slot": 1, "name": "…", "blocks": {"Patch_0": "<hex>", …}}, …]}`.
+- Restore: checks the format, the model and every block's length against `ParameterMap`; shows the 8 names; asks as in
+  5.4; writes the blocks as paced DT1 messages of at most 128 data bytes; reads everything back and reports any
+  difference.
+
+## 8. Error handling
+
+| Situation                                        | Behaviour                                                                           |
+|--------------------------------------------------|-------------------------------------------------------------------------------------|
+| Amp off or unplugged                             | "Not connected", controls disabled. When the amp reappears, the connect sequence runs again. |
+| Identity reply does not match                    | No connection; the message names the device found.                                  |
+| Editor revision differs from hardware check 1    | Message; the editor is read-only.                                                   |
+| No reply to a read within 3 s                    | One retry, then nothing more is sent and "Connection problem" offers Reconnect.     |
+| No patch-write confirmation within 15 s          | Error message; the channel is re-read.                                              |
+| Malformed message or bad checksum from the amp   | Dropped and logged; the affected block is re-read.                                  |
+| Write refused (validation or ceiling)            | Message at the control; nothing is sent.                                            |
+| Disconnect during restore                        | Error naming the last channel written; restore can be run again.                    |
+| Invalid backup file                              | Refused before any write, with the reason.                                          |
+
+Logging goes through `os.Logger` (categories `midi`, `safety`, `librarian`) and can be followed in Console.app or with
+`log stream`.
+
+## 9. Testing
+
+Automated, with `swift test` and no amp:
+
+- `SysEx`: encode/decode round trips; checksums against messages from Tone Studio's sources and from hardware check 1;
+  7-bit address arithmetic; every value encoding.
+- `ParameterMap`: no overlapping addresses; ranges consistent with encodings; the guarded set equals appendix A plus the
+  reviewed additions from 3.5; the Panic addresses resolve to amp VOLUME and FOOT VOLUME.
+- `SafetyGuard`: refusal above the ceiling; ramps are monotonic and respect step size and spacing; decreases go out at
+  once and cancel ramps; the soft-switch sequence, including its refusal above the ceiling; Panic clears the queue and
+  goes first; connecting and incoming amp messages produce no writes; random sequences of UI actions never produce a
+  write above a ceiling or a faster rise than allowed.
+- Integration with `SimulatedAmp`: connect sequence, editing, channel switch with the ceiling dialog, save, rename, and a
+  backup → restore round trip that must be byte-identical.
+
+Hardware checklist, kept in `docs/hardware-checklist.md` and run together with you:
+
+1. Reads and the editor-mode flag only, MASTER at minimum. Record the endpoint names, the identity reply, the editor
+   level and revision. Read the channel names and the live patch and compare them with the amp's knobs, including amp
+   VOLUME at `60 00 00 28`. Log what the amp sends when you turn knobs, switch channels, change a variation colour and
+   save on the amp. Editor mode off at the end.
+2. First writes, MASTER at minimum: rename the live patch and read it back; lower amp VOLUME; Panic; one ramped increase
+   within the ceiling, checked in the log. Then, at a MASTER level you choose, listen to the ramp and to Panic.
+3. Librarian, after a backup has been made and verified: save to a channel you choose, rename it, restore the backup.
+
+## 10. Build and run
+
+```
+Package.swift            KatanaKit library and tests, Tanto executable
+Sources/KatanaKit/
+Sources/Tanto/
+Tests/KatanaKitTests/
+tools/                   parameter-table generator (Python, uv)
+scripts/build-app.sh     builds Tanto.app
+docs/
+```
+
+- `scripts/build-app.sh` builds a release binary with SwiftPM and assembles `Tanto.app`: `Info.plist`, an `.icns` icon
+  made with macOS's `iconutil`, ad-hoc `codesign`. Copying it to `/Applications` is a separate, explicit step. The
+  package opens in Xcode for editing and debugging.
+- Deployment target macOS 27. CoreMIDI needs no sandbox or special entitlements.
+- The folder is not a git repository yet; whether to create one is decided at the start of implementation.
+
+## 11. Later milestones
+
+- `.tsl` import and export (Tone Studio LiveSet, format revision `0002` in `product_setting.js`).
+- Global settings and controller assignments. The guard then extends to system levels: global EQ level, cab EQ level,
+  USB levels.
+- Visual design.
+
+## Appendix A: guarded parameters
+
+Selected by the rule in 5.2 from `address_map.js`: 210 parameters. Ceilings at the default of 50 %.
+
+| Section           | Parameters                                                        | Range → ceiling     |
+|-------------------|-------------------------------------------------------------------|---------------------|
+| Booster           | DRIVE                                                             | 0–120 → 60          |
+|                   | EFFECT LEVEL, DIRECT MIX, SOLO LEVEL                              | 0–100 → 50          |
+| Amp               | GAIN                                                              | 0–120 → 60          |
+|                   | VOLUME (`PREAMP_A_LEVEL`), SOLO LEVEL                             | 0–100 → 50          |
+| EQ 1, EQ 2 (each) | parametric LOW, LOW-MID, HIGH-MID and HIGH GAIN; LEVEL            | −20…+20 dB → 0 dB   |
+|                   | graphic 31 Hz … 16 kHz (10 bands); LEVEL                          | −24…+24 dB → 0 dB   |
+| Mod, FX (73 each) | per effect type, below                                            |                     |
+| Delay, Delay 2    | FEEDBACK, DIRECT MIX                                              | 0–100 → 50          |
+|                   | EFFECT LEVEL                                                      | 0–120 → 60          |
+| Reverb            | EFFECT LEVEL, DIRECT MIX                                          | 0–100 → 50          |
+| Pedal FX          | EFFECT LEVEL and DIRECT MIX of WAH, PEDAL BEND and EVH95          | 0–100 → 50          |
+| Foot Volume       | FOOT VOLUME                                                       | 0–100 → 50          |
+| Send/Return       | SEND LEVEL, RETURN LEVEL                                          | 0–100 → 50          |
+| Solo              | LEVEL; delay FEEDBACK and DIRECT LEVEL                            | 0–100 → 50          |
+|                   | delay EFFECT LEVEL                                                | 0–120 → 60          |
+|                   | EQ LOW, MID and HIGH GAIN; LEVEL                                  | −24…+24 dB → 0 dB   |
+
+Mod and FX, by effect type (0–100 → 50 unless noted):
+
+- T.WAH, AUTO WAH: PEAK, EFFECT LEVEL, DIRECT MIX
+- SUB WAH, SLICER, RING MOD, PEDAL BEND, EVH WAH: EFFECT LEVEL, DIRECT MIX
+- COMPRESSOR: SUSTAIN, LEVEL
+- LIMITER, GUITAR SIM, SLOW GEAR, AC.PROCESSOR, TREMOLO, ROTARY, UNI-V, VIBRATO, HUMANIZER, AC.GUITAR SIM: LEVEL
+- GRAPHIC EQ: 10 bands, LEVEL (−20…+20 dB → 0 dB)
+- PARAMETRIC EQ: LOW, LOW-MID, HIGH-MID and HIGH GAIN, LEVEL (−20…+20 dB → 0 dB)
+- WAVE SYNTH: RESONANCE, SYNTH LEVEL, DIRECT MIX
+- OCTAVE: EFFECT LEVEL, DIRECT MIX
+- PITCH SHIFTER: PS1 LEVEL, PS2 LEVEL, PS1 FEEDBACK, DIRECT MIX
+- HARMONIST: HR1 LEVEL, HR2 LEVEL, HR1 FEEDBACK, DIRECT MIX
+- PHASER, FLANGER: RESONANCE, EFFECT LEVEL, DIRECT MIX
+- 2x2 CHORUS: LOW LEVEL, HIGH LEVEL, DIRECT MIX
+- EVH FLANGER: REGEN.
+- DC-30: INPUT VOLUME, ECHO VOLUME, ECHO INTENSITY
+- HEAVY OCTAVE: 1OCT LEVEL, 2OCT LEVEL, DIRECT MIX
+
+Effect-type names here come from the internal ids (e.g. `PRM_FX1_ADCOMP_*` is the compressor); the generator uses Tone
+Studio's labels. The generator also applies the rule to unnamed entries that Tone Studio shows, using their on-screen
+labels. Each Delay block has two unnamed 0–120 entries to check this way.
