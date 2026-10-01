@@ -37,6 +37,7 @@ public final class SimulatedAmp: MIDITransport {
         var memory: [Int: UInt8]
         var received: [Received] = []
         var answersReads = true
+        var confirmsSaves = true
         let identityReply: [UInt8]
         var crossingKnobTurn: (address: Address, value: [UInt8])?
     }
@@ -111,6 +112,18 @@ public final class SimulatedAmp: MIDITransport {
                     reports = press(button, &state.memory)
                     return nil
                 }
+                if address == .patchSelect || address == .patchWrite, data.count == 2, (0...8).contains(Int(data[1])) {
+                    let slot = Int(data[1])
+                    if address == .patchSelect {
+                        reports = load(slot, &state.memory)
+                    } else {
+                        copy(from: .temporaryPatch, to: .userPatch(slot), &state.memory)
+                        if state.confirmsSaves {
+                            reports = [SysEx.dt1(.patchWrite, data: data, deviceID: deviceID)]
+                        }
+                    }
+                    return nil
+                }
                 for (index, byte) in data.enumerated() {
                     state.memory[address.linear + index] = byte
                 }
@@ -179,23 +192,36 @@ public final class SimulatedAmp: MIDITransport {
     ///
     /// - Parameter slot: 0 = PANEL, 1–4 = A1–A4, 5–8 = B1–B4.
     public func switchChannelOnAmp(_ slot: Int) {
-        let messages: [[UInt8]] = state.withLock { state in
-            let stored = Address.userPatch(slot).linear
-            let live = Address.temporaryPatch.linear
-            for index in 0..<patchSize {
-                state.memory[live + index] = state.memory[stored + index] ?? 0
-            }
-            state.memory[Address.currentPatchNumber.linear] = 0
-            state.memory[Address.currentPatchNumber.linear + 1] = UInt8(slot)
-            var messages = [SysEx.dt1(.currentPatchNumber, data: [0, UInt8(slot)], deviceID: deviceID)]
-            for start in stride(from: 0, to: patchSize, by: 241) {
-                let data = (start..<min(start + 241, patchSize)).map { state.memory[live + $0] ?? 0 }
-                messages.append(SysEx.dt1(.temporaryPatch.advanced(by: start), data: data, deviceID: deviceID))
-            }
-            return messages
-        }
+        let messages = state.withLock { load(slot, &$0.memory) }
         for message in messages {
             continuation.yield(message)
+        }
+    }
+
+    /// Stops or resumes confirming saves, to test the save timeout.
+    ///
+    /// - Parameter confirms: Whether a save gets its confirmation.
+    public func setConfirmsSaves(_ confirms: Bool) {
+        state.withLock { $0.confirmsSaves = confirms }
+    }
+
+    // Loads a stored patch into the live patch and returns the messages the amp sends about it.
+    private func load(_ slot: Int, _ memory: inout [Int: UInt8]) -> [[UInt8]] {
+        copy(from: .userPatch(slot), to: .temporaryPatch, &memory)
+        memory[Address.currentPatchNumber.linear] = 0
+        memory[Address.currentPatchNumber.linear + 1] = UInt8(slot)
+        var messages = [SysEx.dt1(.currentPatchNumber, data: [0, UInt8(slot)], deviceID: deviceID)]
+        let live = Address.temporaryPatch.linear
+        for start in stride(from: 0, to: patchSize, by: 241) {
+            let data = (start..<min(start + 241, patchSize)).map { memory[live + $0] ?? 0 }
+            messages.append(SysEx.dt1(.temporaryPatch.advanced(by: start), data: data, deviceID: deviceID))
+        }
+        return messages
+    }
+
+    private func copy(from source: Address, to target: Address, _ memory: inout [Int: UInt8]) {
+        for index in 0..<patchSize {
+            memory[target.linear + index] = memory[source.linear + index] ?? 0
         }
     }
 

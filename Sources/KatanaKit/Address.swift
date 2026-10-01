@@ -66,6 +66,10 @@ extension Address {
     public static let editorCommunicationLevel = Address(packed: 0x7F00_0000)
     /// Editor communication mode: 1 = on, 0 = off.
     public static let editorCommunicationMode = Address(packed: 0x7F00_0001)
+    /// Selects a channel: `00 nn`, as Tone Studio's channel menu sends.
+    public static let patchSelect = Address(packed: 0x7F00_0100)
+    /// Saves the live patch to a channel: `00 nn`, as Tone Studio's WRITE sends; the amp confirms with a DT1 here.
+    public static let patchWrite = Address(packed: 0x7F00_0104)
 
     /// The base address of stored patch `slot`.
     ///

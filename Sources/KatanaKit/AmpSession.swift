@@ -10,6 +10,8 @@ public enum AmpError: Error, Equatable, Sendable {
     case unsupportedCommunicationLevel(UInt8)
     /// No reply arrived for a read at this address, also not after one retry.
     case timeout(Address)
+    /// The amp did not confirm saving to this channel within the time limit (design spec, section 8).
+    case noSaveConfirmation(Int)
 }
 
 /// Reasons a write is refused before anything is sent.
@@ -20,6 +22,10 @@ public enum WriteError: Error, Equatable, Sendable {
     case outOfRange(String, Int)
     /// A patch name must be at most 16 characters from space to `}`.
     case invalidName(String)
+    /// Channels are 0 (PANEL) to 8 for selecting, and 1 to 8 for saving and writing.
+    case noSuchChannel(Int)
+    /// A write into a stored channel must lie inside the patch and carry 1 to 128 bytes.
+    case outsideChannel(offset: Int, count: Int)
 }
 
 /// The lane an outgoing message waits in. A lane goes before the lanes below it; within a lane, first come, first
@@ -75,6 +81,8 @@ public enum LiveUpdate: Equatable, Sendable {
     case bytes(offset: Int, data: [UInt8])
     /// The amp switched to another channel (0 = PANEL, 1–8 = A1–B4). The amp then sends the new patch as bytes.
     case channel(Int)
+    /// The amp saved the live patch to a channel on its own; `nil` if its message did not say which.
+    case patchSaved(Int?)
 }
 
 /// Timing of the conversation with the amp.
@@ -121,6 +129,10 @@ public actor AmpSession {
     private let changesContinuation: AsyncStream<AmpChange>.Continuation
     private let updatesContinuation: AsyncStream<LiveUpdate>.Continuation
     private var livePatch: [UInt8]?
+    private var patchSize: Int?
+    // A save that waits for the amp's confirmation.
+    private var saveWaiter: (id: Int, continuation: CheckedContinuation<Void, any Error>)?
+    private var saveCount = 0
     // The bytes of the patch's blocks, and those the amp has not reported since its last channel change. The copy is
     // valid once it has been read and none is left.
     private var blockBytes: [Range<Int>] = []
@@ -263,6 +275,7 @@ public actor AmpSession {
     /// - Parameter map: The patch layout.
     /// - Throws: `AmpError.timeout` if a read gets no reply.
     public func readLivePatch(_ map: ParameterMap) async throws {
+        patchSize = map.patchSize
         if livePatch == nil {
             livePatch = [UInt8](repeating: 0, count: map.patchSize)
             blockBytes = map.table.blocks.map { $0.offset..<($0.offset + $0.size) }
@@ -305,6 +318,68 @@ public actor AmpSession {
         return Refreshed(
             value: parameter.value(fromRaw: parameter.encoding.decode(data)), reportCount: reports.count,
             reportedValue: reports.value, generation: generation, panics: panics)
+    }
+
+    /// Selects a channel with Tone Studio's command, then reads the channel number and the live patch back, whether or
+    /// not the amp also sends its dump. Everything decided on the old channel is dropped before the command goes out:
+    /// the copy of the live patch is invalid until the new channel has been read.
+    ///
+    /// - Parameter slot: 0 = PANEL, 1–4 = A1–A4, 5–8 = B1–B4.
+    /// - Throws: `WriteError.noSuchChannel`; `AmpError.timeout` if a read gets no reply; an error from the transport.
+    func select(_ slot: Int) async throws {
+        guard (0...8).contains(slot) else { throw WriteError.noSuchChannel(slot) }
+        generation += 1
+        uncovered = Set(blockBytes.joined())
+        try await sendCommand(SysEx.dt1(.patchSelect, data: [0, UInt8(slot)], deviceID: deviceID))
+        updatesContinuation.yield(.channel(try await readCurrentChannel()))
+        for range in blockBytes {
+            try await readIntoCopy(offset: range.lowerBound, size: range.count)
+        }
+        if let livePatch {
+            updatesContinuation.yield(.bytes(offset: 0, data: livePatch))
+        }
+    }
+
+    /// Saves the live patch to a channel with Tone Studio's WRITE command, and waits for the amp's confirmation.
+    ///
+    /// - Parameters:
+    ///   - slot: 1–4 = A1–A4, 5–8 = B1–B4.
+    ///   - timeout: How long to wait for the confirmation (design spec, section 8: 15 s).
+    /// - Throws: `WriteError.noSuchChannel`; `AmpError.noSaveConfirmation`; an error from the transport.
+    func savePatch(to slot: Int, timeout: Duration = .seconds(15)) async throws {
+        guard (1...8).contains(slot) else { throw WriteError.noSuchChannel(slot) }
+        try await sendCommand(SysEx.dt1(.patchWrite, data: [0, UInt8(slot)], deviceID: deviceID))
+        saveCount += 1
+        let id = saveCount
+        // The confirmation is handled on this actor, so it cannot arrive before the waiter is in place.
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+            saveWaiter = (id, continuation)
+            Task { [clock] in
+                do {
+                    try await clock.sleep(for: timeout)
+                } catch {
+                    return  // cancelled: never happens
+                }
+                self.expireSave(id, slot: slot)
+            }
+        }
+    }
+
+    /// Writes bytes straight into a stored channel, as Tone Studio's restore does.
+    ///
+    /// - Parameters:
+    ///   - data: 1 to 128 bytes, each below `0x80`.
+    ///   - slot: 1–4 = A1–A4, 5–8 = B1–B4.
+    ///   - offset: Linear offset inside the patch.
+    /// - Throws: `WriteError.noSuchChannel` or `.outsideChannel`; an error from the transport.
+    func writeStored(_ data: [UInt8], slot: Int, offset: Int) async throws {
+        guard (1...8).contains(slot) else { throw WriteError.noSuchChannel(slot) }
+        guard let patchSize, offset >= 0, (1...Self.maxReadSize).contains(data.count),
+            offset + data.count <= patchSize, data.allSatisfy({ $0 < 0x80 })
+        else {
+            throw WriteError.outsideChannel(offset: offset, count: data.count)
+        }
+        try await sendCommand(SysEx.dt1(Address.userPatch(slot).advanced(by: offset), data: data, deviceID: deviceID))
     }
 
     /// Reads the selected channel.
@@ -597,6 +672,14 @@ public actor AmpSession {
             if let pending, pending.expected == .identityReply {
                 resolve(pending, with: Reply(data: reply, writes: writeCount))
             }
+        case .dataSet(let address, let data) where address == .patchWrite:
+            if let saveWaiter {
+                self.saveWaiter = nil
+                saveWaiter.continuation.resume()
+            } else {
+                let slot = data.count == 2 ? ValueEncoding.int2x7.decode(data) : nil
+                updatesContinuation.yield(.patchSaved(slot.flatMap { (1...8).contains($0) ? $0 : nil }))
+            }
         case .dataSet(let address, let data):
             outstanding.removeAll { clock.now - $0.time > Self.lateReplyWindow }
             if let index = outstanding.firstIndex(where: { $0.expected == .data(address, data.count) }) {
@@ -680,6 +763,12 @@ public actor AmpSession {
             }
             releaseSend()
         }
+    }
+
+    private func expireSave(_ id: Int, slot: Int) {
+        guard let saveWaiter, saveWaiter.id == id else { return }
+        self.saveWaiter = nil
+        saveWaiter.continuation.resume(throwing: AmpError.noSaveConfirmation(slot))
     }
 
     private func expire(_ id: Int) {

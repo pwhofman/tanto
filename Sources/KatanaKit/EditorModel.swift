@@ -361,6 +361,8 @@ public final class EditorModel {
         switch update {
         case .channel(let channel):
             currentChannel = channel
+        case .patchSaved:
+            break  // The names are read again from plan 3, task 4 on.
         case .bytes(let offset, let data):
             for value in map.values(in: data, at: offset) {
                 values[value.parameter.offset] = value.value
@@ -387,13 +389,15 @@ public final class EditorModel {
         case let error as WriteError:
             switch error {
             case .invalidName: "Use at most 16 characters from space to }"
-            case .notWritable, .outOfRange: "Not allowed"
+            case .notWritable, .outOfRange, .outsideChannel: "Not allowed"
+            case .noSuchChannel(let slot): "There is no channel \(slot)"
             }
         case let error as AmpError:
             switch error {
             case .notAKatana: "The connected device is not a Katana MkII"
             case .noIdentityReply, .timeout: "The amp does not answer"
             case .unsupportedCommunicationLevel(let level): "Unsupported editor communication level \(level)"
+            case .noSaveConfirmation: "The amp did not confirm the save"
             }
         case let error as CoreMIDIError:
             error.description
