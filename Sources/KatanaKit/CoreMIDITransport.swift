@@ -13,18 +13,17 @@ public struct MIDIEndpoint: Sendable, Hashable {
 public enum CoreMIDIError: Error, Equatable, CustomStringConvertible {
     /// A CoreMIDI call failed.
     case call(String, OSStatus)
-    /// No source or no destination has "KATANA" in its name.
+    /// No source or no destination is named "KATANA".
     case katanaNotFound
-    /// More than one source or destination has "KATANA" in its name.
-    case ambiguous(sources: [String], destinations: [String])
+    /// Several endpoints are named "KATANA".
+    case ambiguous([String])
 
     public var description: String {
         switch self {
         case .call(let name, let status): "\(name) failed with OSStatus \(status)"
         case .katanaNotFound:
             "no MIDI source and destination named KATANA; is the amp on and the BOSS driver installed?"
-        case .ambiguous(let sources, let destinations):
-            "several KATANA endpoints, sources \(sources), destinations \(destinations)"
+        case .ambiguous(let names): "several MIDI endpoints named KATANA: \(names)"
         }
     }
 }
@@ -48,18 +47,25 @@ public final class CoreMIDITransport: MIDITransport {
         (0..<MIDIGetNumberOfDestinations()).map { endpoint(MIDIGetDestination($0)) }
     }
 
-    /// Connects to the only source and destination whose names contain "KATANA".
+    /// Connects to the amp's main port.
     ///
     /// - Returns: The transport.
-    /// - Throws: `CoreMIDIError` if there is no such pair, more than one, or CoreMIDI fails.
+    /// - Throws: `CoreMIDIError` if the main port is missing or ambiguous, or CoreMIDI fails.
     public static func katana() throws -> CoreMIDITransport {
-        let sources = sources().filter { $0.name.localizedCaseInsensitiveContains("KATANA") }
-        let destinations = destinations().filter { $0.name.localizedCaseInsensitiveContains("KATANA") }
-        guard !sources.isEmpty, !destinations.isEmpty else { throw CoreMIDIError.katanaNotFound }
-        guard sources.count == 1, destinations.count == 1 else {
-            throw CoreMIDIError.ambiguous(sources: sources.map(\.name), destinations: destinations.map(\.name))
-        }
-        return try CoreMIDITransport(source: sources[0], destination: destinations[0])
+        try CoreMIDITransport(source: mainPort(in: sources()), destination: mainPort(in: destinations()))
+    }
+
+    /// Picks the amp's main port, the endpoint named exactly "KATANA". The amp also offers "KATANA DAW CTRL" for
+    /// controlling recording software; Tone Studio and Tanto talk on the main port.
+    ///
+    /// - Parameter endpoints: All sources or all destinations.
+    /// - Returns: The main port.
+    /// - Throws: `CoreMIDIError.katanaNotFound` if there is none, `.ambiguous` if there are several.
+    static func mainPort(in endpoints: [MIDIEndpoint]) throws -> MIDIEndpoint {
+        let matches = endpoints.filter { $0.name.caseInsensitiveCompare("KATANA") == .orderedSame }
+        guard let port = matches.first else { throw CoreMIDIError.katanaNotFound }
+        guard matches.count == 1 else { throw CoreMIDIError.ambiguous(matches.map(\.name)) }
+        return port
     }
 
     /// Opens a connection.
