@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 
 @testable import KatanaKit
@@ -132,4 +133,76 @@ private func connectedModel() async throws -> (EditorModel, SimulatedAmp) {
     await model.settle()
     #expect(try await eventually { model.value(of: led) == 1 })
     #expect(model.buttonRefusals[.variation] == nil)
+}
+
+@MainActor
+private func modelWithLoudChannel() async throws -> (EditorModel, SimulatedAmp, Parameter) {
+    let map = try ParameterMap.bundled()
+    let amp = SimulatedAmp(map: map)
+    let volume = try #require(map.parameter(block: "Status", prm: "PRM_KNOB_POS_VOLUME"))
+    amp.setMemory([30], at: .temporaryPatch.advanced(by: volume.offset))
+    amp.setMemory([88], at: Address.userPatch(6).advanced(by: volume.offset))
+    let model = EditorModel(map: map)
+    await model.connect(amp, timing: SessionTiming(spacing: .milliseconds(1), readTimeout: .seconds(1)))
+    return (model, amp, volume)
+}
+
+@MainActor
+@Test func aSwitchWithoutAReasonToAskHappensAtOnce() async throws {
+    let (model, _, _) = try await modelWithLoudChannel()
+    await model.requestSwitch(to: 5)
+    #expect(model.pendingSwitch == nil)
+    #expect(try await eventually { model.currentChannel == 5 })
+    #expect(!model.hasUnsavedEdits)
+}
+
+@MainActor
+@Test func aSwitchAsksAboutUnsavedEditsAndThenAboutTheCeiling() async throws {
+    let (model, _, volume) = try await modelWithLoudChannel()
+    await model.set(volume, to: 20)
+    #expect(model.hasUnsavedEdits)
+    await model.requestSwitch(to: 6)
+    #expect(model.pendingSwitch == EditorModel.PendingSwitch(slot: 6, question: .unsavedEdits))
+    await model.answerSwitch(true)
+    #expect(
+        model.pendingSwitch
+            == EditorModel.PendingSwitch(
+                slot: 6, question: .valuesAboveCeiling([ParameterValue(parameter: volume, value: 88)])))
+    await model.answerSwitch(false)
+    #expect(model.pendingSwitch == nil)
+    #expect(model.currentChannel == 1)
+    await model.requestSwitch(to: 6)
+    await model.answerSwitch(true)
+    await model.answerSwitch(true)
+    #expect(try await eventually { model.currentChannel == 6 && model.value(of: volume) == 88 })
+    #expect(!model.hasUnsavedEdits)
+}
+
+@MainActor
+@Test func savesRenamesAndSavesMadeOnTheAmpUpdateTheNames() async throws {
+    let (model, amp, _) = try await modelWithLoudChannel()
+    await model.save(to: 3)
+    #expect(model.channelNames[3] == "SIM LIVE")
+    #expect(try await eventually { model.currentChannel == 3 })
+    await model.rename(4, to: "RENAMED")
+    #expect(model.channelNames[4] == "RENAMED")
+    amp.setMemory(Array("SAVED ON THE AMP".utf8), at: .userPatch(7))
+    amp.sendFromAmp(SysEx.dt1(.patchWrite, data: [0, 7], deviceID: 0))
+    #expect(try await eventually { model.channelNames[7] == "SAVED ON THE AMP" })
+    #expect(model.librarianMessage == nil)
+}
+
+@MainActor
+@Test func aBackupFileIsCheckedAndRestored() async throws {
+    let (model, amp, _) = try await modelWithLoudChannel()
+    let backup = try #require(await model.backup())
+    let data = try backup.encoded()
+    #expect(model.checkBackupFile(data, against: backup))
+    amp.setMemory(Array("CHANGED".utf8), at: .userPatch(2))
+    let loaded = try #require(model.loadBackup(data))
+    await model.restore(loaded)
+    #expect(model.channelNames[2] == "SIM PATCH 2")
+    #expect(amp.memory(at: .userPatch(2), count: 7) == Array("SIM PAT".utf8))
+    #expect(model.loadBackup(Data("{}".utf8)) == nil)
+    #expect(model.librarianMessage != nil)
 }

@@ -1,4 +1,5 @@
 import Dispatch
+import Foundation
 import Observation
 import os
 
@@ -63,9 +64,33 @@ public final class EditorModel {
     public private(set) var ceilingPercent = 50
     /// How often Panic was pressed; a slider ignores the rest of a drag that a Panic interrupted.
     public private(set) var panicCount = 0
+    /// Whether the live patch has changes made in Tanto since a channel was last loaded or saved; switching asks before
+    /// it discards them (design spec, section 5.4).
+    public private(set) var hasUnsavedEdits = false
+    /// A switch to another channel that waits for the user's answer.
+    public private(set) var pendingSwitch: PendingSwitch?
+    /// The result or the error of the latest librarian action, as a message for the window.
+    public private(set) var librarianMessage: String?
+
+    /// A switch to another channel that waits for the user's answer (design spec, section 5.4).
+    public struct PendingSwitch: Equatable, Sendable {
+        /// What the user is asked.
+        public enum Question: Equatable, Sendable {
+            /// Switching discards the live patch's unsaved edits.
+            case unsavedEdits
+            /// These front-panel volumes of the channel lie above their ceilings.
+            case valuesAboveCeiling([ParameterValue])
+        }
+
+        /// The channel to switch to.
+        public let slot: Int
+        /// The question.
+        public let question: Question
+    }
 
     @ObservationIgnored private var session: AmpSession?
     @ObservationIgnored private var safety: SafetyGuard?
+    @ObservationIgnored private var librarian: Librarian?
     @ObservationIgnored private var updatesTask: Task<Void, Never>?
     @ObservationIgnored private var retryTask: Task<Void, Never>?
     @ObservationIgnored private var retries = 0
@@ -120,8 +145,11 @@ public final class EditorModel {
             channelNames = names
             try await session.readLivePatch(map)
             liveName = await session.liveName() ?? ""
-            safety = try SafetyGuard(
+            let safety = try SafetyGuard(
                 session: session, map: map, ceilingPercent: ceilingPercent, rampDuration: .seconds(2))
+            self.safety = safety
+            librarian = Librarian(session: session, safety: safety, map: map)
+            hasUnsavedEdits = false
             connection = .connected
         } catch {
             connection = .failed(Self.message(for: error))
@@ -193,6 +221,8 @@ public final class EditorModel {
         retryTask?.cancel()
         session = nil
         safety = nil
+        librarian = nil
+        pendingSwitch = nil
         connection = .notConnected
     }
 
@@ -210,6 +240,8 @@ public final class EditorModel {
         }
         session = nil
         safety = nil
+        librarian = nil
+        pendingSwitch = nil
         connection = .notConnected
     }
 
@@ -274,6 +306,7 @@ public final class EditorModel {
         do {
             try await safety.set(parameter, to: value)
             refusals[parameter.offset] = nil
+            hasUnsavedEdits = true
         } catch {
             refusals[parameter.offset] = Self.message(for: error)
         }
@@ -298,6 +331,7 @@ public final class EditorModel {
         do {
             try await safety.press(button)
             buttonRefusals[button] = nil
+            hasUnsavedEdits = true
         } catch {
             buttonRefusals[button] = Self.message(for: error)
         }
@@ -329,9 +363,188 @@ public final class EditorModel {
         do {
             try await safety.rename(to: name)
             nameRefusal = nil
+            hasUnsavedEdits = true
         } catch {
             nameRefusal = Self.message(for: error)
         }
+    }
+
+    /// Asks to switch to a channel. The switch happens at once, unless the live patch has unsaved edits or the channel's
+    /// front-panel volumes lie above their ceilings: then `pendingSwitch` holds the question, the unsaved edits first.
+    ///
+    /// - Parameter slot: 0 = PANEL, 1–4 = A1–A4, 5–8 = B1–B4.
+    public func requestSwitch(to slot: Int) async {
+        if hasUnsavedEdits {
+            pendingSwitch = PendingSwitch(slot: slot, question: .unsavedEdits)
+        } else {
+            await checkCeiling(before: slot)
+        }
+    }
+
+    /// Answers the question of `pendingSwitch`; after the question about unsaved edits the ceiling is checked.
+    ///
+    /// - Parameter proceed: `true` to go on with the switch, `false` to keep the current channel.
+    public func answerSwitch(_ proceed: Bool) async {
+        guard let pending = pendingSwitch else { return }
+        pendingSwitch = nil
+        guard proceed else { return }
+        switch pending.question {
+        case .unsavedEdits:
+            await checkCeiling(before: pending.slot)
+        case .valuesAboveCeiling:
+            await switchChannel(to: pending.slot)
+        }
+    }
+
+    /// Saves the live sound to a channel; the window has asked before overwriting it.
+    ///
+    /// - Parameter slot: 1–4 = A1–A4, 5–8 = B1–B4.
+    public func save(to slot: Int) async {
+        guard let librarian else { return notConnected() }
+        do {
+            channelNames[slot] = try await librarian.save(to: slot)
+            librarianMessage = nil
+        } catch {
+            librarianMessage = "Not saved: \(Self.message(for: error))"
+            await readNames([slot])
+        }
+    }
+
+    /// Renames a stored channel; the sound does not change.
+    ///
+    /// - Parameters:
+    ///   - slot: 1–4 = A1–A4, 5–8 = B1–B4.
+    ///   - name: At most 16 characters from space to `}`.
+    public func rename(_ slot: Int, to name: String) async {
+        guard let librarian else { return notConnected() }
+        do {
+            try await librarian.rename(slot, to: name)
+            channelNames[slot] = PatchName.decode(Array(name.utf8))
+            librarianMessage = nil
+        } catch {
+            librarianMessage = "Not renamed: \(Self.message(for: error))"
+        }
+    }
+
+    /// Reads channels 1–8 into a backup.
+    ///
+    /// - Returns: The backup, or `nil` with `librarianMessage` saying why.
+    public func backup() async -> ChannelBackup? {
+        guard let librarian else {
+            notConnected()
+            return nil
+        }
+        do {
+            return try await librarian.backup()
+        } catch {
+            librarianMessage = "No backup: \(Self.message(for: error))"
+            return nil
+        }
+    }
+
+    /// Checks a written backup file by reading it like a restore would and comparing it with what was read from the
+    /// amp; `librarianMessage` reports the outcome.
+    ///
+    /// - Parameters:
+    ///   - data: The file's contents, read back after writing.
+    ///   - backup: The backup that was written.
+    /// - Returns: `true` if the file holds exactly that backup.
+    public func checkBackupFile(_ data: Data, against backup: ChannelBackup) -> Bool {
+        do {
+            let read = try ChannelBackup.load(data, map: map)
+            let same = read.channels == backup.channels
+            librarianMessage =
+                same
+                ? "Backed up channels 1–8; the file reads back the same."
+                : "The backup file differs from what was read from the amp."
+            return same
+        } catch {
+            librarianMessage = "The backup file cannot be read back: \(Self.message(for: error))"
+            return false
+        }
+    }
+
+    /// Reads a backup file for a restore; every check runs before anything can be written.
+    ///
+    /// - Parameter data: The file's contents.
+    /// - Returns: The backup, or `nil` with `librarianMessage` saying why.
+    public func loadBackup(_ data: Data) -> ChannelBackup? {
+        do {
+            return try ChannelBackup.load(data, map: map)
+        } catch {
+            librarianMessage = "This file cannot be restored: \(Self.message(for: error))"
+            return nil
+        }
+    }
+
+    /// Restores channels 1–8 and reads them back; the window has asked first, with MASTER at minimum.
+    ///
+    /// - Parameter backup: A backup from `loadBackup(_:)`.
+    public func restore(_ backup: ChannelBackup) async {
+        guard let librarian else { return notConnected() }
+        do {
+            let differences = try await librarian.restore(backup)
+            librarianMessage =
+                differences.isEmpty
+                ? "Restored channels 1–8; they read back the same."
+                : "Restored channels 1–8, but these read back differently: "
+                    + differences.map { "\(EditorModel.channelLabel($0.slot)) \($0.block)" }.joined(separator: ", ")
+        } catch {
+            librarianMessage = "Restore stopped: \(Self.message(for: error))"
+        }
+        await readNames(Array(1...8))
+    }
+
+    /// Clears `librarianMessage` once the window has shown it.
+    public func dismissLibrarianMessage() {
+        librarianMessage = nil
+    }
+
+    /// The name of a channel as the amp shows it: PANEL, A1–A4, B1–B4.
+    ///
+    /// - Parameter slot: 0–8.
+    /// - Returns: The label.
+    public static func channelLabel(_ slot: Int) -> String {
+        slot == 0 ? "PANEL" : "\(slot <= 4 ? "A" : "B")\((slot - 1) % 4 + 1)"
+    }
+
+    private func checkCeiling(before slot: Int) async {
+        guard let librarian else { return notConnected() }
+        do {
+            let above = try await librarian.valuesAboveCeiling(slot)
+            if above.isEmpty {
+                await switchChannel(to: slot)
+            } else {
+                pendingSwitch = PendingSwitch(slot: slot, question: .valuesAboveCeiling(above))
+            }
+        } catch {
+            librarianMessage = "Not switched: \(Self.message(for: error))"
+        }
+    }
+
+    private func switchChannel(to slot: Int) async {
+        guard let librarian else { return notConnected() }
+        do {
+            try await librarian.select(slot)
+            librarianMessage = nil
+        } catch {
+            librarianMessage = "Not switched: \(Self.message(for: error))"
+        }
+    }
+
+    private func readNames(_ slots: [Int]) async {
+        guard let librarian else { return }
+        for slot in slots where channelNames.indices.contains(slot) {
+            do {
+                channelNames[slot] = try await librarian.name(slot)
+            } catch {
+                logger.error("name of channel \(slot) not read: \(error)")
+            }
+        }
+    }
+
+    private func notConnected() {
+        librarianMessage = "Not connected"
     }
 
     /// Whether changing the ceiling needs the user's confirmation: raising it does, lowering it does not.
@@ -361,8 +574,9 @@ public final class EditorModel {
         switch update {
         case .channel(let channel):
             currentChannel = channel
-        case .patchSaved:
-            break  // The names are read again from plan 3, task 4 on.
+            hasUnsavedEdits = false
+        case .patchSaved(let slot):
+            Task { await readNames(slot.map { [$0] } ?? Array(1...8)) }
         case .bytes(let offset, let data):
             for value in map.values(in: data, at: offset) {
                 values[value.parameter.offset] = value.value
@@ -401,6 +615,24 @@ public final class EditorModel {
             }
         case let error as CoreMIDIError:
             error.description
+        case let error as BackupError:
+            switch error {
+            case .unreadable: "it is not a Tanto backup"
+            case .unknownFormat(let format): "format \(format) is unknown"
+            case .otherModel(let model): "it is for \(model)"
+            case .channels(let slots): "it must hold channels 1–8 once each, not \(slots)"
+            case .missingBlock(let slot, let block): "\(channelLabel(slot)) lacks \(block)"
+            case .unknownBlock(let slot, let block): "\(channelLabel(slot)) has an unknown block \(block)"
+            case .blockLength(let slot, let block, let expected, let found):
+                "\(channelLabel(slot)) \(block) has \(found) bytes instead of \(expected)"
+            case .invalidBytes(let slot, let block): "\(channelLabel(slot)) \(block) holds invalid bytes"
+            case .nameMismatch(let slot): "the name of \(channelLabel(slot)) does not match its data"
+            }
+        case let error as LibrarianError:
+            switch error {
+            case .restoreStopped(let slot):
+                slot.map { "channels A1 to \(channelLabel($0)) were written" } ?? "no channel was written completely"
+            }
         default:
             "\(error)"
         }
