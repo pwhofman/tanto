@@ -26,8 +26,9 @@ KATANA MkII.
 
 Tantō writes to your amp, and a careless write can make it very loud. It guards against that, within limits:
 
-- It raises VOLUME, GAIN, levels and the other controls that make the amp louder gradually: a full sweep takes at least
-  2 seconds. Switching an effect or a type sets VOLUME to 0 for a moment and raises it again.
+- It raises VOLUME, GAIN, levels and the other controls that make the amp louder no faster than a full sweep in half a
+  second, so that a jump, such as a typed value, becomes a short swell; "Raise gradually" in Settings turns this off.
+  Switching an effect or a type sets VOLUME to 0 for a moment and raises it again.
 - Panic sets VOLUME to 0 at once.
 - The amp's MASTER knob limits the speaker and the PHONES jack, but not LINE OUT or USB audio. If you use those, turn
   on the ceiling in Settings, which keeps the guarded controls below a share of their travel.
