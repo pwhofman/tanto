@@ -33,6 +33,61 @@ extension Parameter {
         }
     }
 
+    /// The value that a typed text means, as Tone Studio's number pad takes one: a number in the displayed unit, with or
+    /// without the unit, or a value's name; a number for named values picks the nearest one, e.g. `1250` or `1.25k` for
+    /// `1.25 kHz`. The value is kept within the parameter's range.
+    ///
+    /// - Parameter text: E.g. `320`, `320ms`, `+1.5dB`, `off` or `flat`.
+    /// - Returns: The value, or `nil` if the text means none.
+    public func value(forText text: String) -> Int? {
+        let typed = Self.squeezed(text)
+        guard !typed.isEmpty else { return nil }
+        if let option = options?.first(where: { Self.squeezed($0.label) == typed }) {
+            return option.value
+        }
+        if let valueLabels {
+            if let index = valueLabels.firstIndex(where: { Self.squeezed($0) == typed }) {
+                return minimum + index
+            }
+            guard let number = Self.number(in: typed) else { return nil }
+            let numbered = valueLabels.indices.compactMap { index in
+                Self.number(in: valueLabels[index]).map { (index, $0) }
+            }
+            return numbered.min { abs($0.1 - number) < abs($1.1 - number) }.map { minimum + $0.0 }
+        }
+        if format == .offBelowZero, typed == "off" {
+            return minimum
+        }
+        guard let number = Self.number(in: typed) else { return nil }
+        let value =
+            switch format {
+            case .signedHalfDecibels: number * 2
+            case .tenthsOfSeconds: number * 10
+            case .plusOne: number - 1
+            default: number
+            }
+        return min(max(Int(value.rounded()), minimum), maximum)
+    }
+
+    private static func squeezed(_ text: String) -> String {
+        text.lowercased().filter { !$0.isWhitespace }
+    }
+
+    // The number a text starts with, with k for thousands: -1.5 in `-1.5db`, 1250 in `1.25khz`; `nil` without one.
+    private static func number(in text: String) -> Double? {
+        let text = squeezed(text)
+        var digits = ""
+        for character in text {
+            if character.isNumber || character == "." || (digits.isEmpty && (character == "-" || character == "+")) {
+                digits.append(character)
+            } else {
+                break
+            }
+        }
+        guard let number = Double(digits) else { return nil }
+        return text.dropFirst(digits.count).hasPrefix("k") ? number * 1_000 : number
+    }
+
     /// Whether the parameter is shown, given the live values of the parameters its visibility depends on.
     ///
     /// - Parameter value: The displayed value of the parameter at an offset, or `nil` if unknown.

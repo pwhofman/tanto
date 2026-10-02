@@ -33,3 +33,36 @@ private func parameter(_ block: String, _ prm: String) throws -> Parameter {
     #expect(!peak.isVisible { _ in nil })
     #expect(try parameter("Status", "PRM_KNOB_POS_VOLUME").isVisible { _ in nil })
 }
+
+// Every value of every knob and slider reads back from its own text, as Tone Studio's number pad takes a typed value.
+@Test func everyKnobValueReadsBackFromItsText() throws {
+    let map = try ParameterMap.bundled()
+    var failures: [String] = []
+    for parameter in map.table.parameters
+    where parameter.written && parameter.kind == .numeric && parameter.control != .menu {
+        for value in parameter.minimum...parameter.maximum
+        where parameter.value(forText: parameter.displayText(for: value)) != value {
+            failures.append("\(parameter.prm) \(value) \(parameter.displayText(for: value))")
+        }
+    }
+    #expect(failures.isEmpty, "\(failures.prefix(10))")
+}
+
+@Test func typedValuesNeedNoUnitAndAreClampedToTheRange() throws {
+    let map = try ParameterMap.bundled()
+    func parameter(_ block: String, _ prm: String) throws -> Parameter {
+        try #require(map.parameter(block: block, prm: prm))
+    }
+    let time = try parameter("Delay(1)", "PRM_DLY_COMMON_DLY_TIME")
+    #expect(time.value(forText: "320") == 320 && time.value(forText: " 320 ms ") == 320)
+    #expect(time.value(forText: "99999") == time.maximum)
+    #expect(time.value(forText: "fast") == nil && time.value(forText: "") == nil)
+    let knob = try parameter("Status", "PRM_KNOB_POS_BOOST")
+    #expect(knob.value(forText: "off") == -1 && knob.value(forText: "30") == 30)
+    let lowCut = try parameter("Patch_0", "PRM_EQ_LOW_CUT")
+    #expect(lowCut.displayText(for: lowCut.value(forText: "flat") ?? -1) == "FLAT")
+    #expect(lowCut.displayText(for: lowCut.value(forText: "100") ?? -1) == "100 Hz")
+    let highCut = try parameter("Patch_0", "PRM_EQ_HIGH_CUT")
+    #expect(highCut.displayText(for: highCut.value(forText: "1.25k") ?? -1) == "1.25 kHz")
+    #expect(highCut.displayText(for: highCut.value(forText: "1300") ?? -1) == "1.25 kHz")
+}

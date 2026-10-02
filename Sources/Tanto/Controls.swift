@@ -44,6 +44,10 @@ struct ContourKnob: View {
             KnobView(
                 model: model, value: model.contour ?? 0, range: 0...contours, ceiling: nil, positions: contours + 1,
                 label: "CONTOUR", vertical: false, text: { $0 == 0 ? "OFF" : "\($0)" },
+                parse: { typed in
+                    let typed = typed.trimmingCharacters(in: .whitespaces)
+                    return typed.lowercased() == "off" ? 0 : Int(typed)
+                },
                 set: { await model.setContour($0) })
             if let refusal = model.refusals[onOff.offset] ?? model.refusals[select.offset] {
                 Text(refusal).font(.caption2).foregroundStyle(.red).multilineTextAlignment(.center)
@@ -53,10 +57,11 @@ struct ContourKnob: View {
 }
 
 /// A knob, or for the graphic EQs a vertical slider, with its value and label below. Dragging or scrolling turns it
-/// (`ScrollRules`), and so do the arrow keys once a drag has given the knob the keyboard focus. A guarded control stops
-/// at the higher of its ceiling and its current value (design spec, section 6), and a drag, scroll or key press that
-/// Panic interrupted sends nothing more. A knob with positions, such as AMP TYPE, sends its choice when the drag ends or
-/// the wheel or keys rest.
+/// (`ScrollRules`), and so do the arrow keys once a drag has given the knob the keyboard focus; a ring shows that focus
+/// while the knob turns. Clicking the value lets one type another, which Return applies. A guarded control stops at the
+/// higher of its ceiling and its current value (design spec, section 6), and a drag, scroll or key press that Panic
+/// interrupted sends nothing more. A knob with positions, such as AMP TYPE, sends its choice when the drag ends or the
+/// wheel or keys rest.
 private struct KnobView: View {
     let model: EditorModel
     let value: Int
@@ -67,15 +72,25 @@ private struct KnobView: View {
     let label: String
     let vertical: Bool
     let text: (Int) -> String
+    /// The value a typed text means, or `nil`.
+    let parse: (String) -> Int?
     let set: (Int) async -> Void
     @State private var dragged: Int?
     @State private var dragPanics: Int?
     @State private var wheelRest: Task<Void, Never>?
     @FocusState private var focused: Bool
+    @State private var ringShown = false
+    @State private var ringFade: Task<Void, Never>?
+    // The text being typed for the value; `nil` while the value shows.
+    @State private var typed: String?
+    @FocusState private var typing: Bool
+    @Environment(\.isEnabled) private var isEnabled
 
     private static let sliderHeight = 120.0
     // A scroll ends as a drag's release does once the wheel has rested this long.
     private static let wheelRestTime = Duration.milliseconds(300)
+    // The focus ring fades once the knob has rested this long; the knob keeps the arrow keys.
+    private static let ringTime = Duration.milliseconds(1500)
 
     var body: some View {
         let stop = ceiling.map { max($0, value) } ?? range.upperBound
@@ -94,6 +109,14 @@ private struct KnobView: View {
                 .turnsWhenScrolled(stepPoints: Dial.travel / span) { turn(by: $0, stop: stop) }
                 .focusable(interactions: .edit)
                 .focused($focused)
+                .focusEffectDisabled()
+                .overlay {
+                    if focused, ringShown {
+                        Circle().stroke(Color.accentColor, lineWidth: 2).frame(width: 36, height: 36)
+                            .allowsHitTesting(false)
+                    }
+                }
+                .animation(.easeOut(duration: 0.3), value: ringShown)
                 // Up and right turn up, as dragging up does; Shift takes ten steps.
                 .onKeyPress(keys: [.upArrow, .rightArrow, .downArrow, .leftArrow]) { press in
                     let step = press.modifiers.contains(.shift) ? 10 : 1
@@ -101,9 +124,28 @@ private struct KnobView: View {
                     return .handled
                 }
             }
-            Text(text(shown))
-                .font(.callout).monospacedDigit()
-                .foregroundStyle(ceiling.map { shown > $0 } == true ? .orange : .primary)
+            if let typed {
+                TextField("Value", text: Binding(get: { typed }, set: { self.typed = $0 }))
+                    .textFieldStyle(.roundedBorder)
+                    .font(.callout).monospacedDigit()
+                    .multilineTextAlignment(.center)
+                    .frame(width: 70)
+                    .focused($typing)
+                    .onAppear { typing = true }
+                    .onSubmit { apply(typed, stop: stop) }
+                    // Clicking elsewhere leaves the value as it was.
+                    .onChange(of: typing) {
+                        if !typing { self.typed = nil }
+                    }
+            } else {
+                Text(text(shown))
+                    .font(.callout).monospacedDigit()
+                    .foregroundStyle(ceiling.map { shown > $0 } == true ? .orange : .primary)
+                    .onTapGesture {
+                        if isEnabled { typed = text(shown) }
+                    }
+                    .help("Click to type a value")
+            }
             Text(label).font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
             if let ceiling {
                 Text("max \(text(ceiling))").font(.caption2).foregroundStyle(.tertiary)
@@ -118,6 +160,7 @@ private struct KnobView: View {
     }
 
     private func change(to new: Int) {
+        showRing()
         dragged = new
         if positions == nil, !isInterrupted {
             Task { await set(new) }
@@ -125,6 +168,7 @@ private struct KnobView: View {
     }
 
     private func track(_ tracking: Bool) {
+        showRing()
         wheelRest?.cancel()
         wheelRest = nil
         if tracking {
@@ -142,6 +186,7 @@ private struct KnobView: View {
     // A scroll or a key press turns the control as a drag does, and ends as the drag's release does once the wheel or the
     // keys rest.
     private func turn(by steps: Int, stop: Int) {
+        showRing()
         if dragPanics == nil {
             track(true)
         }
@@ -160,6 +205,30 @@ private struct KnobView: View {
             track(false)
         }
     }
+
+    private func showRing() {
+        ringShown = true
+        ringFade?.cancel()
+        ringFade = Task {
+            do {
+                try await Task.sleep(for: Self.ringTime)
+            } catch {
+                return  // Cancelled: a later turn shows it anew.
+            }
+            ringShown = false
+        }
+    }
+
+    // A typed value within the range and below the ceiling, as a drag would stop; text that means no value changes
+    // nothing.
+    private func apply(_ text: String, stop: Int) {
+        typed = nil
+        guard let parsed = parse(text) else { return }
+        let new = min(max(parsed, range.lowerBound), stop)
+        if new != value {
+            Task { await set(new) }
+        }
+    }
 }
 
 extension KnobView {
@@ -170,7 +239,7 @@ extension KnobView {
             range: parameter.minimum...parameter.maximum, ceiling: model.ceiling(of: parameter),
             positions: parameter.kind == .numeric ? nil : parameter.maximum - parameter.minimum + 1,
             label: parameter.label, vertical: vertical, text: parameter.displayText(for:),
-            set: { await model.set(parameter, to: $0) })
+            parse: parameter.value(forText:), set: { await model.set(parameter, to: $0) })
     }
 }
 
