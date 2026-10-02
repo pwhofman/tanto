@@ -123,6 +123,9 @@ public actor AmpSession {
     /// How long after a channel change the amp's reports count as its dump of the new channel, not as edits; a select
     /// waits as long for the dump before it reads the channel instead.
     static let dumpTime = Duration.seconds(2)
+    /// How long the amp must have sent nothing before a select ends: the amp ignores messages, a select included, until
+    /// it has sent the last of its dump and reports, whose gaps were at most 58 ms (hardware check 4).
+    static let dumpQuiet = Duration.milliseconds(100)
 
     /// Changes made on the amp itself, reported while connected.
     public nonisolated let changes: AsyncStream<AmpChange>
@@ -144,6 +147,7 @@ public actor AmpSession {
     private var dumpWaiter: (id: Int, slot: Int, continuation: CheckedContinuation<Bool, Never>)?
     private var dumpWaitCount = 0
     private var reportedChannel: Int?
+    private var dumpQuietTask: Task<Void, Never>?
     // The bytes of the patch's blocks, and those the amp has not reported since its last channel change. The copy is
     // valid once it has been read and none is left.
     private var blockBytes: [Range<Int>] = []
@@ -332,10 +336,11 @@ public actor AmpSession {
     }
 
     /// Selects a channel by writing its number, as Tone Studio's channel list does. The amp answers with its channel
-    /// number and a dump of the new patch, which take about 0.3 s, and leaves reads unanswered meanwhile (hardware check
-    /// 3), so the select waits for them; only if they have not come within `dumpTime` does it read the channel number
-    /// and the live patch back. Everything decided on the old channel is dropped before the write goes out: the copy of
-    /// the live patch is invalid until the new patch has arrived.
+    /// number and a dump of the new patch, in about 0.3 s, and ignores messages until it has sent the last of them
+    /// (hardware checks 3 and 4), so the select waits for them and then for `dumpQuiet` without a message; only if they
+    /// have not come within `dumpTime` does it read the channel number and the live patch back. Everything decided on the
+    /// old channel is dropped before the write goes out: the copy of the live patch is invalid until the new patch has
+    /// arrived.
     ///
     /// - Parameter slot: 0 = PANEL, 1–4 = A1–A4, 5–8 = B1–B4.
     /// - Throws: `WriteError.noSuchChannel`; `AmpError.timeout` if a read gets no reply; an error from the transport.
@@ -345,8 +350,13 @@ public actor AmpSession {
         uncovered = Set(blockBytes.joined())
         try await sendCommand(SysEx.dt1(.currentPatchNumber, data: [0, UInt8(slot)], deviceID: deviceID))
         if await !dumpArrives(for: slot, within: Self.dumpTime) {
-            logger.notice("no dump of channel \(slot) after selecting it; reading it back")
-            updatesContinuation.yield(.channel(try await readCurrentChannel()))
+            let reported = reportedChannel.map { "channel \($0)" } ?? "no channel"
+            let missing = uncovered.count
+            let channel = try await readCurrentChannel()
+            logger.notice(
+                "no dump after selecting channel \(slot): the amp reported \(reported, privacy: .public) and left \(missing) bytes out; it is on channel \(channel)"
+            )
+            updatesContinuation.yield(.channel(channel))
             for range in blockBytes {
                 try await readIntoCopy(offset: range.lowerBound, size: range.count)
             }
@@ -663,7 +673,6 @@ public actor AmpSession {
                 reportedChannel = channel
             }
             updatesContinuation.yield(.channel(channel))
-            resumeDumpWaiter()
             return
         }
         let offset = address.linear - Address.temporaryPatch.linear
@@ -685,9 +694,6 @@ public actor AmpSession {
         // The amp's dump follows its channel number within a second (hardware check 3).
         if fromAmp, channelChangeTime.map({ clock.now - $0 > Self.dumpTime }) ?? true {
             updatesContinuation.yield(.editedOnAmp)
-        }
-        if fromAmp {
-            resumeDumpWaiter()
         }
     }
 
@@ -731,6 +737,7 @@ public actor AmpSession {
             } else {
                 changesContinuation.yield(AmpChange(address: address, data: data))
                 applyToLivePatch(address, data, fromAmp: true)
+                checkDumpWaiter()
             }
         case .malformed(let bytes):
             logger.error("dropped malformed message of \(bytes.count) bytes")
@@ -800,8 +807,9 @@ public actor AmpSession {
         }
     }
 
-    // Waits until the amp has reported `slot` and its dump has covered the copy, or `timeout` has passed. It starts
-    // right after the select went out, with no pause in between, so only the amp's answer to it counts.
+    // Waits until the amp has reported `slot`, its dump has covered the copy and it has sent nothing for `dumpQuiet`, or
+    // until `timeout` has passed. It starts right after the select went out, with no pause in between, so only the amp's
+    // answer to it counts.
     private func dumpArrives(for slot: Int, within timeout: Duration) async -> Bool {
         reportedChannel = nil
         dumpWaitCount += 1
@@ -814,21 +822,32 @@ public actor AmpSession {
                 } catch {
                     return  // cancelled: never happens
                 }
-                self.expireDumpWait(id)
+                self.endDumpWait(id, dumped: false)
             }
         }
     }
 
-    private func resumeDumpWaiter() {
+    // Runs after every message from the amp, also one past the copy: each restarts the wait for quiet, which begins
+    // once the amp has reported the selected channel and its dump has covered the copy.
+    private func checkDumpWaiter() {
+        dumpQuietTask?.cancel()
         guard let dumpWaiter, reportedChannel == dumpWaiter.slot, uncovered.isEmpty else { return }
-        self.dumpWaiter = nil
-        dumpWaiter.continuation.resume(returning: true)
+        dumpQuietTask = Task { [clock] in
+            do {
+                try await clock.sleep(for: Self.dumpQuiet)
+            } catch {
+                return  // cancelled: the amp sent another message
+            }
+            self.endDumpWait(dumpWaiter.id, dumped: true)
+        }
     }
 
-    private func expireDumpWait(_ id: Int) {
+    private func endDumpWait(_ id: Int, dumped: Bool) {
         guard let dumpWaiter, dumpWaiter.id == id else { return }
         self.dumpWaiter = nil
-        dumpWaiter.continuation.resume(returning: false)
+        dumpQuietTask?.cancel()
+        dumpQuietTask = nil
+        dumpWaiter.continuation.resume(returning: dumped)
     }
 
     private func expireSave(_ id: Int, slot: Int) {

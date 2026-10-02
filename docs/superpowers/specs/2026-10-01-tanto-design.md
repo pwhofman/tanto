@@ -143,8 +143,9 @@ Data flow:
   no write is triggered, apart from the correction of 5.8. On a channel change the amp sends its channel number and then
   the whole new patch; the mirror is valid again once that dump has covered it (5.8).
 - Switch from the app: DT1 to `00 01 00 00`. The amp answers as after its own channel buttons, in about 0.3 s, and
-  leaves reads unanswered meanwhile (hardware check 3), so its dump is the read-back. Only if the channel number and the
-  whole patch have not come within 2 s does Tanto read them.
+  ignores messages, a select included, until it has sent the last of them (hardware checks 3 and 4). So its dump is the
+  read-back, and the switch ends once the amp has sent nothing for 0.1 s. Only if the channel number and the whole patch
+  have not come within 2 s does Tanto read them.
 - Quit or disconnect: editor mode off.
 
 ## 5. Safety

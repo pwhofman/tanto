@@ -43,6 +43,16 @@ private func containsRead(_ received: some Sequence<SimulatedAmp.Received>) -> B
     #expect(await session.isLivePatchValid)
 }
 
+@Test func aSelectEndsOnlyOnceTheAmpHasBeenQuietAfterItsDump() async throws {
+    let (amp, session, _, _) = try await connectedSession()
+    // The amp ignored a select that went out between its dump and the message that ends it (hardware check 4).
+    amp.setDumpTail(after: .milliseconds(30))
+    try await session.select(6)
+    let end = ContinuousClock.now
+    let tail = try #require(amp.dumpTailTimes.last)
+    #expect(end - tail >= AmpSession.dumpQuiet)
+}
+
 @Test func withoutTheAmpsDumpASelectReadsTheChannelBack() async throws {
     let (amp, session, _, volume) = try await connectedSession()
     amp.setSendsDumps(false)

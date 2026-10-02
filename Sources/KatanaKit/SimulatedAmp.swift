@@ -41,6 +41,8 @@ public final class SimulatedAmp: MIDITransport {
         var answersReads = true
         var confirmsSaves = true
         var sendsDumps = true
+        var dumpTailDelay: Duration?
+        var dumpTailTimes: [ContinuousClock.Instant] = []
         let identityReply: [UInt8]
         var crossingKnobTurn: (address: Address, value: [UInt8])?
         var lastTap: [TapButton: ContinuousClock.Instant] = [:]
@@ -103,6 +105,7 @@ public final class SimulatedAmp: MIDITransport {
     public func send(_ message: [UInt8]) throws {
         let now = ContinuousClock.now
         var reports: [[UInt8]] = []
+        var tailDelay: Duration?
         let reply: [UInt8]? = state.withLock { state in
             state.received.append(Received(message: message, time: now))
             if message == SysEx.identityRequest {
@@ -130,7 +133,10 @@ public final class SimulatedAmp: MIDITransport {
                     let slot = Int(data[1])
                     if address == .currentPatchNumber {
                         let dump = load(slot, &state.memory)
-                        if state.sendsDumps { reports = dump }
+                        if state.sendsDumps {
+                            reports = dump
+                            tailDelay = state.dumpTailDelay
+                        }
                     } else {
                         copy(from: .temporaryPatch, to: .userPatch(slot), &state.memory)
                         if state.confirmsSaves {
@@ -169,6 +175,17 @@ public final class SimulatedAmp: MIDITransport {
         }
         for report in reports {
             continuation.yield(report)
+        }
+        if let tailDelay {
+            Task { [self] in
+                do {
+                    try await Task.sleep(for: tailDelay)
+                } catch {
+                    return  // cancelled: never happens
+                }
+                state.withLock { $0.dumpTailTimes.append(.now) }
+                continuation.yield(SysEx.dt1(Address(packed: 0x6000_0F44), data: [0, 0, 0, 0], deviceID: deviceID))
+            }
         }
     }
 
@@ -234,6 +251,19 @@ public final class SimulatedAmp: MIDITransport {
         for message in messages {
             continuation.yield(message)
         }
+    }
+
+    /// Ends the dump after a select as the real amp does, with a short message past the patch, `delay` after the parts
+    /// that cover the patch (hardware check 4: about 20 ms); `nil`, as at first, sends no such message.
+    ///
+    /// - Parameter delay: The delay, or `nil`.
+    public func setDumpTail(after delay: Duration?) {
+        state.withLock { $0.dumpTailDelay = delay }
+    }
+
+    /// When each message of `setDumpTail(after:)` went out.
+    public var dumpTailTimes: [ContinuousClock.Instant] {
+        state.withLock { $0.dumpTailTimes }
     }
 
     /// Stops or resumes sending the channel number and the patch after a select, to test the reads that replace them.

@@ -203,14 +203,17 @@ can be installed with `scripts/build-app.sh --install`.
 2. Click through four channels quickly, then run through them with the arrow keys. Tanto ends on the last channel
    chosen, and the amp's channel LEDs agree.
 3. Switch with a channel button on the amp: Tanto follows, as before.
-4. Read only, by Claude: Tanto's log since step 1 holds no "no dump of channel … after selecting it" and no "no reply,
+4. Read only, by Claude: Tanto's log since step 1 holds no "no dump after selecting channel" and no "no reply,
    retrying once".
 
-### Results
+### Results, 2026-10-02
+
+Katana-100 MkII, POWER CONTROL at 0.5 W, MASTER at minimum, Tanto 28f1603.
 
 | Item | Result |
 |---|---|
-| A switch shows the new channel within about half a second, without "Edited" | |
-| Quick clicks and arrow keys end on the last channel; the amp agrees | |
-| A channel button on the amp: Tanto follows | |
-| Log: no fallback reads, no retries | |
+| A switch shows the new channel within about half a second, without "Edited" | Yes. |
+| Quick clicks and arrow keys end on the last channel; the amp agrees | Yes. |
+| A channel button on the amp: Tanto follows | Yes. |
+| Log: no fallback reads, no retries | No retries, but fallback reads: channels 8, 0 and 0 in the first run, and 7 in a second run with the passive listener next to Tanto (`scratch/check4-midi.log`). In the arrow run A1 → A2 → A3 → B3 → PANEL, the amp ignored the select of B3: Tanto sent it as soon as A3's dump covered the patch, about 20 ms before the 4-byte DT1 at `60 00 0F 44` that ends every dump; 2 s later the fallback read found the amp still on A3. Every dump in the log covered the patch 290 ms after the channel number. PANEL dumps as the other channels do, and reports its five effect knobs before and after, for about 0.5 s; the longest gap between the amp's messages was 58 ms. Fixed afterwards: a select ends only once the amp has sent nothing for 0.1 s. |
+| After the fix: quick arrow runs, through PANEL too; log without fallback reads | |
