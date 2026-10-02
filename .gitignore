@@ -22,3 +22,6 @@ __pycache__/
 # Amp backups and probe logs contain personal patch data
 *.tanto-backup.json
 *.probe-log.txt
+
+# Implementation plans are working notes and stay out of the repository
+/docs/superpowers/plans/
