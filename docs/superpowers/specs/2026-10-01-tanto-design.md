@@ -247,7 +247,14 @@ touching the real VOLUME knob sets the register to the knob's position again.
 
 ### 5.6 Outside the app's control
 
-The amp's MIDI map has no MASTER or POWER CONTROL parameter. Both stay hardware-only and remain the final safety limit.
+The amp's MIDI map has no MASTER parameter and none for the POWER CONTROL switch; both stay hardware-only. Its one
+related setting, HALF POWER ADJUST at `00 00 00 2F`, sets the power of the switch's 50 W position. Tone Studio offers it
+only for the KATANA Artist MkII (`businesslogic/ktn/model_info.js`, `powerctrl`), and Tanto does not touch it (3.4).
+
+MASTER and POWER CONTROL are the final safety limit for the speaker, and MASTER is also the limit for PHONES/REC OUT.
+LINE OUT and the USB audio output branch off before MASTER (KATANA Mk II owner's manual, p. 7 and the block diagram on
+p. 11): their level follows VOLUME and the levels of the patch, which only the ceiling limits.
+
 Changes made with the amp's own knobs and buttons are shown in the app, with a warning when a guarded value exceeds its
 ceiling.
 
