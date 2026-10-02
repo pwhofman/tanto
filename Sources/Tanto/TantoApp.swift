@@ -13,14 +13,24 @@ import os
 struct TantoApp: App {
     @NSApplicationDelegateAdaptor private var delegate: AppDelegate
     @State private var model = EditorModel(map: loadParameterMap())
+    @State private var noticeConfirmed = StoredSettings.safetyNoticeConfirmed
+    @State private var showsNotice = false
 
     var body: some Scene {
         Window("Tantō", id: "main") {
             ContentView(model: model)
                 .frame(minWidth: 760, minHeight: 520)
-                .task {
+                // Runs again when the safety notice is confirmed, and then looks for the amp.
+                .task(id: noticeConfirmed) {
                     delegate.model = model
                     await start()
+                }
+                .sheet(isPresented: $showsNotice) {
+                    SafetyNotice {
+                        StoredSettings.safetyNoticeConfirmed = true
+                        showsNotice = false
+                        noticeConfirmed = true
+                    }
                 }
         }
         // Wide enough for the front panel in one row; the window keeps the size it was last given.
@@ -45,6 +55,11 @@ struct TantoApp: App {
             if let path = UserDefaults.standard.string(forKey: "snapshot") {
                 delegate.saveSnapshot(to: URL(filePath: path))
             }
+            return
+        }
+        // Before the amp is first looked for, the notice says to turn MASTER down (design spec, section 5.6).
+        guard noticeConfirmed else {
+            showsNotice = true
             return
         }
         do {
@@ -75,6 +90,14 @@ extension Logger {
 enum StoredSettings {
     private static let ceilingOnKey = "ceilingOn"
     private static let ceilingPercentKey = "ceilingPercent"
+    private static let safetyNoticeKey = "safetyNoticeConfirmed"
+
+    /// Whether the user has confirmed the safety notice; until then Tantō shows it at launch and does not look for
+    /// the amp.
+    static var safetyNoticeConfirmed: Bool {
+        get { UserDefaults.standard.bool(forKey: safetyNoticeKey) }
+        set { UserDefaults.standard.set(newValue, forKey: safetyNoticeKey) }
+    }
 
     /// The ceiling percentage, or `nil` while the ceiling is off, as it is until the user turns it on.
     static var ceilingPercent: Int? {

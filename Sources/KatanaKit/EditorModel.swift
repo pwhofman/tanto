@@ -955,7 +955,7 @@ public final class EditorModel {
             }
         case let error as AmpError:
             switch error {
-            case .notAKatana: "Tanto supports only the Katana-100 MkII so far"
+            case .notAKatana: "Tantō supports only the Katana-100 MkII so far"
             case .noIdentityReply, .timeout: "The amp does not answer"
             case .unsupportedCommunicationLevel(let level): "Unsupported editor communication level \(level)"
             case .noSaveConfirmation: "The amp did not confirm the save"

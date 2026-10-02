@@ -268,6 +268,11 @@ MASTER and POWER CONTROL are the final safety limit for the speaker, and MASTER 
 LINE OUT and the USB audio output branch off before MASTER (KATANA Mk II owner's manual, p. 7 and the block diagram on
 p. 11): their level follows VOLUME and the levels of the patch, which only the ceiling limits.
 
+So that this is known before the first connection, Tanto shows a notice at launch until it is confirmed, and looks for
+the amp only afterwards: turn MASTER to minimum before connecting; MASTER does not limit LINE OUT and USB audio, for
+which Settings turns on the ceiling; Panic sets VOLUME to 0. Its only button reads "I've turned MASTER down". The
+simulated amp skips it.
+
 Changes made with the amp's own knobs and buttons are shown in the app, with a warning when a guarded value exceeds its
 ceiling.
 
