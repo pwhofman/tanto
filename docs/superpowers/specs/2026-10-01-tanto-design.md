@@ -432,7 +432,8 @@ docs/
 - `scripts/build-app.sh` builds a release binary with SwiftPM and assembles `Tanto.app`: `Info.plist`, an `.icns` icon
   made with macOS's `iconutil`, ad-hoc `codesign`. Copying it to `/Applications` is a separate, explicit step. The
   package opens in Xcode for editing and debugging.
-- Deployment target macOS 27. CoreMIDI needs no sandbox or special entitlements.
+- Deployment target macOS 15, the oldest the code compiles for; developed and tested only on macOS 27. CoreMIDI needs
+  no sandbox or special entitlements.
 - The folder is not a git repository yet; whether to create one is decided at the start of implementation.
 
 ## 11. Later milestones

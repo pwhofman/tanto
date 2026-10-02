@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "Tanto",
-    platforms: [.macOS("27.0")],
+    platforms: [.macOS(.v15)],
     targets: [
         .target(name: "KatanaKit", resources: [.copy("Resources/parameters.json")]),
         .testTarget(name: "KatanaKitTests", dependencies: ["KatanaKit"]),

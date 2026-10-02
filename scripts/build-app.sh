@@ -15,6 +15,11 @@ case "${1:-}" in
         ;;
 esac
 
+# The version a release is tagged with, as v$version.
+version=0.1.0
+# The oldest macOS the app runs on, as in Package.swift.
+minimum=15.0
+
 branch=$(git rev-parse --abbrev-ref HEAD)
 # The app shows its name as Tantō, after the katana's companion blade, also in Finder, the Dock and Spotlight through a
 # localized display name; its file stays Tanto, which is easier to type. Finder shows the localized name only while
@@ -33,8 +38,11 @@ else
     fi
 fi
 
-swift build -c release --product Tanto
-bin=$(swift build -c release --product Tanto --show-bin-path)
+# SwiftPM's link records the minimum also as the SDK version, and macOS then draws the app as one built for that older
+# macOS, without the current look. The linker therefore gets the SDK's own version.
+link=(-Xlinker -platform_version -Xlinker macos -Xlinker "$minimum" -Xlinker "$(xcrun --show-sdk-version)")
+swift build -c release --product Tanto "${link[@]}"
+bin=$(swift build -c release --product Tanto "${link[@]}" --show-bin-path)
 
 app="build/$name.app"
 rm -rf "$app"
@@ -69,13 +77,13 @@ cat > "$app/Contents/Info.plist" << PLIST
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.1</string>
+    <string>$version</string>
     <key>CFBundleVersion</key>
     <string>1</string>
     <key>LSHasLocalizedDisplayName</key>
     <true/>
     <key>LSMinimumSystemVersion</key>
-    <string>27.0</string>
+    <string>$minimum</string>
 </dict>
 </plist>
 PLIST
@@ -87,8 +95,8 @@ echo "Built $app"
 if $install; then
     target=/Applications/Tanto.app
     if [ -e "$target" ]; then
-        version=$(defaults read "$target/Contents/Info" CFBundleShortVersionString 2> /dev/null || echo unknown)
-        echo "$target exists: version $version, modified $(stat -f %Sm "$target")"
+        installed=$(defaults read "$target/Contents/Info" CFBundleShortVersionString 2> /dev/null || echo unknown)
+        echo "$target exists: version $installed, modified $(stat -f %Sm "$target")"
         read -r -p "Replace it? [y/N] " answer
         if [ "$answer" != y ]; then
             echo "Not installed"
