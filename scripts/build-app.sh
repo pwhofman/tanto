@@ -16,8 +16,9 @@ case "${1:-}" in
 esac
 
 branch=$(git rev-parse --abbrev-ref HEAD)
-# The app shows its name as Tantō, after the katana's companion blade; its file stays Tanto, which is easier to type
-# and to find.
+# The app shows its name as Tantō, after the katana's companion blade, also in Finder, the Dock and Spotlight through a
+# localized display name; its file stays Tanto, which is easier to type. Finder shows the localized name only while
+# Info.plist's own name matches the file's, so Info.plist says Tanto and the localization Tantō.
 if [ "$branch" = main ]; then
     name=Tanto
     shown=Tantō
@@ -42,11 +43,19 @@ cp "$bin/Tanto" "$app/Contents/MacOS/Tanto"
 # SwiftPM's resource bundle is not found inside a hand-made app, so the app loads its own copy of the table.
 cp Sources/KatanaKit/Resources/parameters.json "$app/Contents/Resources/"
 cp Icon/AppIcon.icns "$app/Contents/Resources/AppIcon.icns"
+mkdir -p "$app/Contents/Resources/en.lproj"
+printf 'CFBundleDisplayName = "%s";\nCFBundleName = "%s";\n' "$shown" "$shown" \
+    > "$app/Contents/Resources/en.lproj/InfoPlist.strings"
+plutil -lint "$app/Contents/Resources/en.lproj/InfoPlist.strings"
 cat > "$app/Contents/Info.plist" << PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleDisplayName</key>
+    <string>$name</string>
     <key>CFBundleExecutable</key>
     <string>Tanto</string>
     <key>CFBundleIconFile</key>
@@ -56,13 +65,15 @@ cat > "$app/Contents/Info.plist" << PLIST
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
-    <string>$shown</string>
+    <string>$name</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
     <string>0.1</string>
     <key>CFBundleVersion</key>
     <string>1</string>
+    <key>LSHasLocalizedDisplayName</key>
+    <true/>
     <key>LSMinimumSystemVersion</key>
     <string>27.0</string>
 </dict>
@@ -86,5 +97,7 @@ if $install; then
         rm -rf "$target"
     fi
     ditto "$app" "$target"
+    # So that Finder and the Dock show the new display name rather than a remembered one.
+    /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$target"
     echo "Installed $target"
 fi

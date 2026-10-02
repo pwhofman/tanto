@@ -6,8 +6,9 @@ Date: 2026-10-01. Status: approved in brainstorming, awaiting spec review.
 
 A macOS app that replaces BOSS TONE STUDIO for KATANA MkII (v2.1.0, Intel-only) for a Katana-100 MkII connected over
 USB. It starts like any other Mac app (double-click `Tanto.app`). The first version favours function over looks: native
-sliders, toggles and pop-up menus. The app shows its name as Tantō, after the katana's companion blade; its file, its
-executable and the repository keep the plain Tanto, which is easier to type and to find.
+sliders, toggles and pop-up menus. The app is called Tantō, after the katana's companion blade, wherever it is shown,
+Finder, the Dock and Spotlight included, through a localized display name; its file, its executable and the repository
+keep the plain Tanto, which is easier to type, and a search for "tanto" finds it.
 
 Hard requirement: the app must never cause a sudden loud sound. Section 5 defines how.
 
