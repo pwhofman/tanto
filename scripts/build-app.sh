@@ -1,16 +1,20 @@
 #!/bin/bash
 # Builds build/Tanto.app from the Swift package. With --install it also copies the app to /Applications, after showing
-# what it replaces and asking first. On a branch other than main it builds build/Tanto Dev.app instead, with its own app
-# ID, so that macOS never opens it in place of the installed app and the two keep their own settings; it does not
-# install.
+# what it replaces and asking first. With --dmg it also makes build/Tanto-<version>.dmg for a release, with the app and
+# a shortcut to Applications; that needs a tree without uncommitted changes, so that the DMG matches a commit. On a
+# branch other than main it builds build/Tanto Dev.app instead, with its own app ID, so that macOS never opens it in
+# place of the installed app and the two keep their own settings; it neither installs nor makes a DMG.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+install=false
+dmg=false
 case "${1:-}" in
-    "") install=false ;;
+    "") ;;
     --install) install=true ;;
+    --dmg) dmg=true ;;
     *)
-        echo "usage: scripts/build-app.sh [--install]" >&2
+        echo "usage: scripts/build-app.sh [--install | --dmg]" >&2
         exit 2
         ;;
 esac
@@ -32,10 +36,14 @@ else
     name="Tanto Dev"
     shown="Tantō Dev"
     identifier=io.github.pwhofman.tanto.dev
-    if $install; then
-        echo "Only main installs; this is $branch" >&2
+    if $install || $dmg; then
+        echo "Only main installs or makes a DMG; this is $branch" >&2
         exit 1
     fi
+fi
+if $dmg && [ -n "$(git status --porcelain)" ]; then
+    echo "Commit the changes first, so that the DMG matches a commit" >&2
+    exit 1
 fi
 
 # SwiftPM's link records the minimum also as the SDK version, and macOS then draws the app as one built for that older
@@ -91,6 +99,20 @@ plutil -lint "$app/Contents/Info.plist"
 codesign --force --sign - "$app"
 codesign --verify --strict "$app"
 echo "Built $app"
+
+if $dmg; then
+    # The disk image opens to the app and a shortcut to Applications to drag it onto.
+    image="build/Tanto-$version.dmg"
+    staging=build/dmg
+    rm -rf "$staging" "$image"
+    mkdir "$staging"
+    ditto "$app" "$staging/$name.app"
+    ln -s /Applications "$staging/Applications"
+    diskutil image create from --format UDZO --volumeName "$shown" "$staging" "$image"
+    rm -rf "$staging"
+    hdiutil verify "$image"
+    echo "Built $image"
+fi
 
 if $install; then
     target=/Applications/Tanto.app
