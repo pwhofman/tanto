@@ -174,17 +174,17 @@ Afterwards, switch to another channel and back.
 
 | Item | Result |
 |---|---|
-| Backup saved and read back the same | |
-| B2: dialog lists the volumes above the ceiling; Cancel keeps the channel | |
-| A channel without such values switches at once | |
-| After Tanto's select: did the amp send its channel number and dump? (log) | |
-| A save made on the amp: Tanto reads the name again | |
-| Save Live Sound Here…: confirmed, channel selected | |
-| Rename: new name in the sidebar | |
-| The window: remarks on the panel and the pages | |
-| Scrolling: BASS turns; momentum and page scrolls leave knobs alone | |
-| Colour marker: VOLUME dips, the amp changes colour, LED and marker follow | |
-| TAP: the time follows the taps, VOLUME stays | |
-| Restore: written, read back the same; scratch channel restored | |
-| Effect knobs on the amp: what the amp reports for each (log) | |
+| Backup saved and read back the same | Yes: `Katana 2026-10-02.tanto-backup.json`; all 8 channels, 31 blocks each, match the amp's replies byte for byte (passive listener). |
+| B2: dialog lists the volumes above the ceiling; Cancel keeps the channel | Yes: LEVEL (solo) 88 and VOLUME 88 (ceiling 50), MOD 50, FX 62, REVERB 61 (ceiling 49). Cancel kept A1 and nothing was written. Bug: the sidebar kept B2 highlighted. |
+| A channel without such values switches at once | Not at first: the amp ignores `7F 00 01 00` and stayed on B2 through about ten selects. Fixed in d29e678 to write PATCH NUM at `00 01 00 00`, as Tone Studio's channel list does; then A1 switched at once. |
+| After Tanto's select: did the amp send its channel number and dump? (log) | Yes: its channel number, then the whole live patch in DT1s of 241 bytes, as after a channel button (a passive MIDI listener next to Tanto, which only receives). |
+| A save made on the amp: Tanto reads the name again | Yes: the amp sent `7F 00 01 04 00 01`, then its channel number and the whole patch; Tanto read A1's name 3 s later: the amp left its first read unanswered while sending the patch, and the retry got the reply ("no reply, retrying once" in the log; the same after step 4). |
+| Save Live Sound Here…: confirmed, channel selected | Yes: BASS 50 → 36 in Tanto (the amp reported its own `PRM_PREAMP_A_BASS` along the way, one to one with the knob); after Save the amp sent `7F 00 01 04 00 01`, its channel number and the whole patch; Tanto selected A1 and read the name; the live patch holds BASS 36. |
+| Rename: new name in the sidebar | Yes: SCRATCH in the sidebar and as the live patch's name; the amp sent nothing back. |
+| The window: remarks on the panel and the pages | Looks very good. To change: align the toolbar's green Connected label vertically with the channel (A1), and give that toolbar item a little more width. |
+| Scrolling: BASS turns; momentum and page scrolls leave knobs alone | BASS turns. With an MX Master 3 and Logi Options' smooth scrolling the wheel sends fine deltas: a slight turn between notches changes BASS, and a fast turn swept 0 → 100 in 0.1 s (fine for now, says the user). Free-spin flick not tried. Scrolling the page past knobs left them alone: the amp reported no other change. |
+| Colour marker: VOLUME dips, the amp changes colour, LED and marker follow | With DELAY off (knob at −1): pressing DELAY's colour button does nothing on the amp (no report), only the VOLUME dip; an effect goes on with its knob. Clicking a marker works: after the dip the amp switches DELAY's type to that colour's variation (`PRM_DLY_TYPE` 0 ↔ 7) and reports the type, not the selection; the marker follows, the LED stays off. With DELAY on (its knob turned up from OFF to 30, soft-switched: the amp reported `PRM_DLY_SW` 1 and LED 2 = red, then raised the effect level 0 → 51 and lowered feedback 35 → 31 as the knob rose): green and red markers each dip VOLUME, switch the type, and the LED follows about 1.5 s later (1 = green, 2 = red), on the amp and in Tanto. Each dip: VOLUME to 0, then back to 50 in about 1.1 s (the amp's `PRM_PREAMP_A_LEVEL` reports). |
+| TAP: the time follows the taps, VOLUME stays | Yes: two taps about half a second apart gave 614 ms, about a second apart 952 ms; the amp reported each new DELAY TIME once per pair, and VOLUME did not move. |
+| Restore: written, read back the same; scratch channel restored | Yes: the dialog listed the eight names; Tanto reported "Restored channels 1–8; they read back the same."; the amp's read-back matches the backup file byte for byte (passive listener); A1 is KATANA Mk2 again. |
+| Effect knobs on the amp: what the amp reports for each (log) | Done with Tanto connected and the passive listener instead of the probe. For A1's selected types, fully left to fully right: BOOSTER raises `PRM_ODDS_DRIVE` 1 → 70 and lowers `PRM_ODDS_EFFECT_LEVEL` 74 → 40; MOD (2x2 CHORUS) raises LOW RATE 21 → 80 and HIGH RATE 11 → 70; FX (TREMOLO) raises RATE 31 → 90; DELAY raises EFFECT LEVEL 2 → 100 and lowers FEEDBACK 34 → 22; REVERB raises EFFECT LEVEL 0 → 100. At −1 the effect's SW and LED go to 0. The amp also reports the knob position (`PRM_KNOB_POS_*`). Then A2 and back to A1 on the amp, each with its full dump. |
 | The dialogs' look: anything unclear or wrong | |
