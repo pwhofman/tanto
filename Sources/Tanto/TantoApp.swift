@@ -73,12 +73,22 @@ extension Logger {
 
 /// Settings kept between launches.
 enum StoredSettings {
-    private static let ceilingKey = "ceilingPercent"
+    private static let ceilingOnKey = "ceilingOn"
+    private static let ceilingPercentKey = "ceilingPercent"
 
-    /// The ceiling percentage; 50 until the user changes it.
-    static var ceilingPercent: Int {
-        get { UserDefaults.standard.object(forKey: ceilingKey) as? Int ?? 50 }
-        set { UserDefaults.standard.set(newValue, forKey: ceilingKey) }
+    /// The ceiling percentage, or `nil` while the ceiling is off, as it is until the user turns it on.
+    static var ceilingPercent: Int? {
+        get { UserDefaults.standard.bool(forKey: ceilingOnKey) ? lastCeilingPercent : nil }
+        set {
+            UserDefaults.standard.set(newValue != nil, forKey: ceilingOnKey)
+            if let newValue { UserDefaults.standard.set(newValue, forKey: ceilingPercentKey) }
+        }
+    }
+
+    /// The percentage the ceiling had when it was last on, which turning it on again restores; 50 until the user
+    /// changes it.
+    static var lastCeilingPercent: Int {
+        UserDefaults.standard.object(forKey: ceilingPercentKey) as? Int ?? 50
     }
 }
 

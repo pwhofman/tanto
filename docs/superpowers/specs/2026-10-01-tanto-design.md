@@ -176,9 +176,10 @@ more of the signal through. Changes in that direction are ramped like guarded in
 limiter's LEVEL is guarded. The table marks the direction in which each parameter gets louder (`louder`). TREMOLO DEPTH
 stays unguarded: lowering it fills in the dips of the tremolo without raising its peaks.
 
-- Ceiling: `ceiling = min + ⌊f · (max − min)⌋` with f = 50 % by default. f is set in Settings from 0 % to 100 % in 5 %
-  steps; raising it asks for confirmation. At 50 %: VOLUME and GAIN knobs 50, effect knobs 49, delay EFFECT LEVEL 60,
-  EQ gains and levels 0 dB.
+- Ceiling, off by default: `ceiling = min + ⌊f · (max − min)⌋`. Settings turns it on and sets f from 0 % to 100 % in
+  5 % steps, 50 % until changed; raising f or turning the ceiling off asks for confirmation. Without a ceiling the guard
+  works as at f = 100 %. At 50 %: VOLUME and GAIN knobs 50, effect knobs 49, delay EFFECT LEVEL 60, EQ gains and levels
+  0 dB.
 - A requested value above the ceiling and above the current value is refused with a message at the control, and the
   control returns to the amp's value. Values are never clipped silently.
 - A value that is already above the ceiling (set on the amp, or stored in a patch) is shown with a warning. It can be
@@ -190,6 +191,11 @@ stays unguarded: lowering it fills in the dips of the tremolo without raising it
 - Moving an effect knob (BOOSTER, MOD, FX, DELAY, REVERB) between −1 and 0 or more switches its effect on or off, as
   hardware check 1 showed for the booster. This uses the soft switch of 5.3: switching on sets the knob to 0, and a
   higher request then ramps from there.
+
+The user made the ceiling optional on 2026-10-02. MASTER and POWER CONTROL already limit the speaker and the PHONES jack
+(5.6), and at 50 % the ceiling allowed no EQ boost and only half of GAIN. It remains for LINE OUT and USB, which MASTER
+does not limit. The gradual rise, the soft switch (5.3) and Panic (5.5) stay on, so no guarded value that Tanto writes
+jumps up; a channel switch still loads the stored volumes at once (5.4).
 
 ### 5.3 Switches and pickers
 
@@ -212,9 +218,9 @@ Patch-name edits and TAP, which changes only the delay time, are not soft-switch
   1. If the live patch has unsaved edits, a dialog asks before discarding them. Edits made in the app count, and so do
      the amp's own knobs: a change the amp reports counts, except in the 2 s after a channel change, when the amp sends
      its dump of the new channel. The toolbar shows "Edited" and the sidebar a dot while there are such edits.
-  2. Tanto reads the target channel from the amp. If a front-panel volume stored there lies above its ceiling, a dialog
-     lists those values and asks first, with Cancel as the default button. The front-panel volumes are the VOLUME, GAIN,
-     BOOSTER, MOD, FX, DELAY and REVERB knobs and the amp volume.
+  2. With the ceiling on, Tanto reads the target channel from the amp. If a front-panel volume stored there lies above
+     its ceiling, a dialog lists those values and asks first, with Cancel as the default button. The front-panel volumes
+     are the VOLUME, GAIN, BOOSTER, MOD, FX, DELAY and REVERB knobs and the amp volume.
 
   Otherwise the switch happens directly, as with the amp's own channel buttons. A channel switch cannot be faded,
   because the amp loads the stored volume at once.
@@ -320,8 +326,8 @@ as BOSS TONE STUDIO arranges its editor and built from macOS's own controls.
   - The generator takes each control's page, position and kind from `layout.div` (section 3.5).
 - Controls follow how Tone Studio draws a parameter: a knob for its knobs and dials (with positions for AMP TYPE and
   CONTOUR), a vertical slider for the graphic EQs, a switch, a pop-up menu or radio buttons. Values are in display
-  units (formatters from `layout.div`, e.g. `+3`, `320 ms`). A guarded control stops at the higher of its ceiling and
-  its current value and shows "max …" below it; a refusal of `SafetyGuard` shows below the control.
+  units (formatters from `layout.div`, e.g. `+3`, `320 ms`). With the ceiling on, a guarded control stops at the higher
+  of its ceiling and its current value and shows "max …" below it; a refusal of `SafetyGuard` shows below the control.
 - Knobs and sliders turn by dragging them up or down, or by scrolling over them, which then does not scroll the page,
   as in Tone Studio. A knob that a drag gave the keyboard focus also turns with the arrow keys: up and right turn it up,
   Shift takes ten steps; a ring shows the focus while the knob turns and fades a moment after. Clicking a knob's value
@@ -338,13 +344,13 @@ as BOSS TONE STUDIO arranges its editor and built from macOS's own controls.
   undo is an ordinary edit through `SafetyGuard`, with ceilings, ramps and soft switches. Panic, a channel change and
   connecting clear the history; switches, saves and restores are not undone. The Edit menu's Undo applies in the name
   field too.
-- Settings window: the ceiling percentage.
+- Settings window: the ceiling, off until turned on, and its percentage.
 
 ## 7. Librarian
 
-- Reads: the names are read when connecting. A channel is read from the amp right before a switch to it, and channels
-  1–8 when backing up, so no check rests on old data. When the amp reports a save, the channel's name is read again.
-  Stored channels have the live patch's layout at `10 0n 00 00`.
+- Reads: the names are read when connecting. A channel is read from the amp right before a switch to it while the
+  ceiling is on, and channels 1–8 when backing up, so no check rests on old data. When the amp reports a save, the
+  channel's name is read again. Stored channels have the live patch's layout at `10 0n 00 00`.
 - Backup: channels 1–8 go into a JSON file, `<name>.tanto-backup.json`:
   `{"format": 1, "model": "KATANA MkII", "created": <ISO 8601>,
   "channels": [{"slot": 1, "name": "…", "blocks": {"Patch_0": "<hex>", …}}, …]}`. The parameter table's block names
@@ -430,9 +436,9 @@ docs/
 
 ## Appendix A: guarded parameters
 
-Selected by the rule in 5.2: the seven front-panel knobs plus 210 parameters of `address_map.js`. Ceilings at the
-default of 50 %. Rows marked "read only" are amp parameters that Tanto reads but never writes (3.5); they count for the
-channel check of 5.4 and for warnings.
+Selected by the rule in 5.2: the seven front-panel knobs plus 210 parameters of `address_map.js`. Ceilings at 50 %,
+where a ceiling starts when turned on. Rows marked "read only" are amp parameters that Tanto reads but never writes
+(3.5); they count for the channel check of 5.4 and for warnings.
 
 | Section           | Parameters                                                        | Range → ceiling     |
 |-------------------|-------------------------------------------------------------------|---------------------|

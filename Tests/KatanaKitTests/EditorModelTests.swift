@@ -129,6 +129,31 @@ private func connectedModel() async throws -> (EditorModel, SimulatedAmp) {
 }
 
 @MainActor
+@Test func turningTheCeilingOffNeedsConfirmationAndTurningItOnDoesNot() async throws {
+    let (model, _) = try await connectedModel()
+    #expect(model.needsConfirmation(toSetCeilingPercent: nil))
+    try await model.setCeilingPercent(nil)
+    #expect(model.ceilingPercent == nil)
+    #expect(!model.needsConfirmation(toSetCeilingPercent: 50))
+    #expect(!model.needsConfirmation(toSetCeilingPercent: nil))
+    // 100 % already lets every guarded value reach its maximum.
+    try await model.setCeilingPercent(100)
+    #expect(!model.needsConfirmation(toSetCeilingPercent: nil))
+}
+
+@MainActor
+@Test func withoutACeilingGuardedValuesStillRiseOneStepAtATime() async throws {
+    let (model, amp) = try await connectedModel()
+    let volume = try #require(model.map.parameter(block: "Status", prm: "PRM_KNOB_POS_VOLUME"))
+    try await model.setCeilingPercent(nil)
+    #expect(model.ceiling(of: volume) == nil)
+    await model.set(volume, to: 55)
+    await model.settle()
+    #expect(model.refusals[volume.offset] == nil)
+    #expect(writes(to: volume, in: amp) == Array(31...55))
+}
+
+@MainActor
 @Test func quittingSwitchesEditorModeOffWithoutTheMainActor() async throws {
     let (model, amp) = try await connectedModel()
     model.disconnectWhileQuitting(timeout: .seconds(1))
@@ -187,6 +212,19 @@ private func modelWithLoudChannel() async throws -> (EditorModel, SimulatedAmp, 
     await model.answerSwitch(true)
     #expect(try await eventually { model.currentChannel == 6 && model.value(of: volume) == 88 })
     #expect(!model.hasUnsavedEdits)
+}
+
+@MainActor
+@Test func withoutACeilingASwitchToALoudChannelNeitherReadsItNorAsks() async throws {
+    let (model, amp, volume) = try await modelWithLoudChannel()
+    try await model.setCeilingPercent(nil)
+    let start = amp.received.count
+    await model.requestSwitch(to: 6)
+    #expect(model.pendingSwitch == nil)
+    #expect(try await eventually { model.currentChannel == 6 && model.value(of: volume) == 88 })
+    // Header, command and the first two address bytes: any read of channel 6's stored patch.
+    let readOfChannel = SysEx.rq1(.userPatch(6), size: 1, deviceID: 0).prefix(10)
+    #expect(!amp.received.dropFirst(start).contains { $0.message.prefix(10) == readOfChannel })
 }
 
 @MainActor

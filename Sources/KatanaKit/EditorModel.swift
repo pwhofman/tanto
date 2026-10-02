@@ -72,8 +72,8 @@ public final class EditorModel {
     public private(set) var buttonRefusals: [PanelButton: String] = [:]
     /// The latest refusal of a TAP button, as a message for the button.
     public private(set) var tapRefusals: [TapButton: String] = [:]
-    /// The ceiling as a percentage of a guarded parameter's travel.
-    public private(set) var ceilingPercent = 50
+    /// The ceiling as a percentage of a guarded parameter's travel, or `nil` without a ceiling.
+    public private(set) var ceilingPercent: Int? = 50
     /// How often Panic was pressed; a slider ignores the rest of a drag that a Panic interrupted.
     public private(set) var panicCount = 0
     /// Whether the live patch has changed since a channel was last loaded or saved, in Tanto or on the amp; switching
@@ -210,7 +210,7 @@ public final class EditorModel {
             try await session.readLivePatch(map)
             liveName = await session.liveName() ?? ""
             let safety = try SafetyGuard(
-                session: session, map: map, ceilingPercent: ceilingPercent, rampDuration: .seconds(2))
+                session: session, map: map, ceilingPercent: ceilingPercent ?? 100, rampDuration: .seconds(2))
             self.safety = safety
             librarian = Librarian(session: session, safety: safety, map: map)
             hasUnsavedEdits = false
@@ -374,9 +374,9 @@ public final class EditorModel {
     /// The ceiling of a guarded parameter.
     ///
     /// - Parameter parameter: A parameter.
-    /// - Returns: The ceiling, or `nil` for unguarded parameters.
+    /// - Returns: The ceiling, or `nil` for unguarded parameters and without a ceiling.
     public func ceiling(of parameter: Parameter) -> Int? {
-        Ceiling.value(of: parameter, percent: ceilingPercent)
+        ceilingPercent.flatMap { Ceiling.value(of: parameter, percent: $0) }
     }
 
     /// Asks `SafetyGuard` for a new value; a refusal is kept as the control's message.
@@ -829,6 +829,8 @@ public final class EditorModel {
 
     private func checkCeiling(before slot: Int) async {
         guard let librarian else { return notConnected() }
+        // Without a ceiling no stored volume lies above it, so the channel need not be read first.
+        guard ceilingPercent != nil else { return await switchChannel(to: slot) }
         do {
             let above = try await librarian.valuesAboveCeiling(slot)
             if above.isEmpty {
@@ -866,21 +868,23 @@ public final class EditorModel {
         librarianMessage = "Not connected"
     }
 
-    /// Whether changing the ceiling needs the user's confirmation: raising it does, lowering it does not.
+    /// Whether changing the ceiling needs the user's confirmation: raising it or switching it off does, lowering it or
+    /// switching it on does not.
     ///
-    /// - Parameter percent: The new percentage.
-    /// - Returns: `true` when raising.
-    public func needsConfirmation(toSetCeilingPercent percent: Int) -> Bool {
-        percent > ceilingPercent
+    /// - Parameter percent: The new percentage, or `nil` to switch the ceiling off.
+    /// - Returns: `true` when the change lets Tanto raise guarded values further.
+    public func needsConfirmation(toSetCeilingPercent percent: Int?) -> Bool {
+        (percent ?? 100) > (ceilingPercent ?? 100)
     }
 
-    /// Changes the ceiling.
+    /// Changes the ceiling. Without one, `SafetyGuard` works as at 100 %: every guarded value can reach its maximum,
+    /// and rises are still ramped.
     ///
-    /// - Parameter percent: 0–100 in steps of 5.
+    /// - Parameter percent: 0–100 in steps of 5, or `nil` for no ceiling.
     /// - Throws: `SafetyError.invalidCeiling`.
-    public func setCeilingPercent(_ percent: Int) async throws {
-        guard Ceiling.isValid(percent: percent) else { throw SafetyError.invalidCeiling(percent) }
-        try await safety?.setCeilingPercent(percent)
+    public func setCeilingPercent(_ percent: Int?) async throws {
+        if let percent, !Ceiling.isValid(percent: percent) { throw SafetyError.invalidCeiling(percent) }
+        try await safety?.setCeilingPercent(percent ?? 100)
         ceilingPercent = percent
     }
 

@@ -114,7 +114,8 @@ public actor SafetyGuard {
     /// - Parameters:
     ///   - session: The connection, with the live patch read.
     ///   - map: The bundled parameter table.
-    ///   - ceilingPercent: The ceiling, 0–100 in steps of 5 (design spec: 50 by default).
+    ///   - ceilingPercent: The ceiling, 0–100 in steps of 5; 100 lets every guarded parameter reach its maximum, as the
+    ///     app's setting does while its ceiling is off (design spec, section 5.2).
     /// - Throws: `SafetyError.invalidCeiling`, `.invalidTable`, or `.invalidTiming` if the session's spacing is below
     ///   20 ms.
     public init(session: AmpSession, map: ParameterMap, ceilingPercent: Int = 50) throws {
