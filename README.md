@@ -3,10 +3,7 @@
 A Mac editor and librarian for the BOSS Katana-100 MkII guitar amplifier, as an alternative to BOSS TONE STUDIO for
 KATANA MkII.
 
-- Edit the live sound: the front panel's knobs and the pages of every effect, with undo and redo.
-- Turn a knob by dragging, scrolling or with the arrow keys, or type its value.
-- Switch channels, save the live sound to a channel, rename channels, and back up and restore all eight.
-- Panic, the toolbar button or Esc, sets the amp's VOLUME to 0.
+![Tantō's window: the channel list, the front panel's knobs and the effects in their colours](docs/screenshot.png)
 
 ## Install
 
