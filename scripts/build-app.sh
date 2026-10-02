@@ -1,6 +1,8 @@
 #!/bin/bash
 # Builds build/Tanto.app from the Swift package. With --install it also copies the app to /Applications, after showing
-# what it replaces and asking first.
+# what it replaces and asking first. On a branch other than main it builds build/Tanto Dev.app instead, with its own app
+# ID, so that macOS never opens it in place of the installed app and the two keep their own settings; it does not
+# install.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -13,17 +15,30 @@ case "${1:-}" in
         ;;
 esac
 
+branch=$(git rev-parse --abbrev-ref HEAD)
+if [ "$branch" = main ]; then
+    name=Tanto
+    identifier=io.github.pwhofman.tanto
+else
+    name="Tanto Dev"
+    identifier=io.github.pwhofman.tanto.dev
+    if $install; then
+        echo "Only main installs; this is $branch" >&2
+        exit 1
+    fi
+fi
+
 swift build -c release --product Tanto
 bin=$(swift build -c release --product Tanto --show-bin-path)
 
-app=build/Tanto.app
+app="build/$name.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$bin/Tanto" "$app/Contents/MacOS/Tanto"
 # SwiftPM's resource bundle is not found inside a hand-made app, so the app loads its own copy of the table.
 cp Sources/KatanaKit/Resources/parameters.json "$app/Contents/Resources/"
 cp Icon/AppIcon.icns "$app/Contents/Resources/AppIcon.icns"
-cat > "$app/Contents/Info.plist" << 'PLIST'
+cat > "$app/Contents/Info.plist" << PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -33,11 +48,11 @@ cat > "$app/Contents/Info.plist" << 'PLIST'
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
-    <string>io.github.pwhofman.tanto</string>
+    <string>$identifier</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
-    <string>Tanto</string>
+    <string>$name</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>

@@ -16,7 +16,8 @@ Plans: `docs/superpowers/plans/`. Hardware checks: `docs/hardware-checklist.md`.
 - Format: `swift format --in-place --recursive Sources Tests Package.swift`; check with
   `swift format lint --recursive Sources Tests Package.swift`.
 - App: `scripts/build-app.sh` builds `build/Tanto.app` with the icon from `Icon/`; `--install` copies it to
-  `/Applications`. For development,
+  `/Applications`. On a branch other than main it builds `build/Tanto Dev.app` instead, with its own app ID and
+  settings, and does not install. For development,
   `open build/Tanto.app --args -simulated YES` runs it against `SimulatedAmp`, and `-snapshot FILE` added to that saves
   the window as a PNG and quits. Keep the file outside `~/Documents`, which would ask the user for access.
 - Probe: `swift run TantoProbe` lists MIDI endpoints and sends nothing; `--connect` talks to the amp (hardware check 1).
