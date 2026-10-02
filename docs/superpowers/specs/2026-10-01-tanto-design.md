@@ -223,7 +223,9 @@ Patch-name edits and TAP, which changes only the delay time, are not soft-switch
      are the VOLUME, GAIN, BOOSTER, MOD, FX, DELAY and REVERB knobs and the amp volume.
 
   Otherwise the switch happens directly, as with the amp's own channel buttons. A channel switch cannot be faded,
-  because the amp loads the stored volume at once.
+  because the amp loads the stored volume at once. A request while a switch reads or loads waits for it and replaces any
+  request already waiting, so quick clicks or arrow keys end on the last channel chosen; while a question is open, other
+  requests are ignored.
 - Saving the live sound to channel n (1–8) from the context menu asks before overwriting; ⌘S saves to the current
   channel at once, as an editor saves a document. It waits until the guard's ramps are done, sends
   Tone Studio's WRITE and waits for the amp's confirmation, then selects channel n as Tone Studio does. The sound does
@@ -301,8 +303,8 @@ as BOSS TONE STUDIO arranges its editor and built from macOS's own controls.
   (red, Esc).
 - Sidebar: PANEL, A1–A4 and B1–B4 with their names; the current channel is highlighted, and during a switch the channel
   it goes to; a dot marks the current channel while the live sound differs from it; clicking a channel switches to it
-  (5.4), and a click during another switch is dropped. Context menu: "Save Live Sound Here…", "Rename…". Backup and
-  Restore are in the File menu, with Save to the current channel (⌘S).
+  (5.4), and the last click or arrow key during a switch follows it. Context menu: "Save Live Sound Here…", "Rename…".
+  Backup and Restore are in the File menu, with Save to the current channel (⌘S).
 - Editor:
   - The patch name.
   - The front panel, always shown: AMPLIFIER (VARIATION, AMP TYPE, GAIN, VOLUME), EQUALIZER (BASS, MIDDLE, TREBLE),

@@ -82,7 +82,7 @@ public final class EditorModel {
     /// A switch to another channel that waits for the user's answer.
     public private(set) var pendingSwitch: PendingSwitch?
     /// The channel a switch is on its way to, from the request until the switch is done, refused or cancelled; the
-    /// sidebar highlights it meanwhile.
+    /// sidebar highlights it meanwhile. A request while the switch loads replaces it, and its switch follows.
     public private(set) var switchTarget: Int?
     /// Whether a save is under way; a save requested meanwhile is dropped.
     public private(set) var isSaving = false
@@ -668,18 +668,16 @@ public final class EditorModel {
 
     /// Asks to switch to a channel. The switch happens at once, unless the live patch has unsaved edits or the channel's
     /// front-panel volumes lie above their ceilings: then `pendingSwitch` holds the question, the unsaved edits first.
-    /// A request while another switch asks or reads is dropped.
+    /// A request while another switch reads or loads becomes its target and follows it, so the latest request wins; a
+    /// request while a question is open is dropped.
     ///
     /// - Parameter slot: 0 = PANEL, 1–4 = A1–A4, 5–8 = B1–B4.
     public func requestSwitch(to slot: Int) async {
-        guard switchTarget == nil else { return }
+        guard pendingSwitch == nil else { return }
+        let running = switchTarget != nil
         switchTarget = slot
-        defer { if pendingSwitch == nil { switchTarget = nil } }
-        if hasUnsavedEdits {
-            pendingSwitch = PendingSwitch(slot: slot, question: .unsavedEdits)
-        } else {
-            await checkCeiling(before: slot)
-        }
+        guard !running else { return }
+        await prepareSwitch(to: slot)
     }
 
     /// Answers the question of `pendingSwitch`; after the question about unsaved edits the ceiling is checked.
@@ -688,13 +686,35 @@ public final class EditorModel {
     public func answerSwitch(_ proceed: Bool) async {
         guard let pending = pendingSwitch else { return }
         pendingSwitch = nil
-        defer { if pendingSwitch == nil { switchTarget = nil } }
-        guard proceed else { return }
+        guard proceed else {
+            switchTarget = nil
+            return
+        }
         switch pending.question {
         case .unsavedEdits:
             await checkCeiling(before: pending.slot)
         case .valuesAboveCeiling:
             await switchChannel(to: pending.slot)
+        }
+        await finishSwitch(to: pending.slot)
+    }
+
+    private func prepareSwitch(to slot: Int) async {
+        if hasUnsavedEdits {
+            pendingSwitch = PendingSwitch(slot: slot, question: .unsavedEdits)
+        } else {
+            await checkCeiling(before: slot)
+        }
+        await finishSwitch(to: slot)
+    }
+
+    /// Ends a switch to `slot`, or its question: a request for another channel made meanwhile starts now.
+    private func finishSwitch(to slot: Int) async {
+        guard pendingSwitch == nil else { return }
+        if let latest = switchTarget, latest != slot {
+            await prepareSwitch(to: latest)
+        } else {
+            switchTarget = nil
         }
     }
 

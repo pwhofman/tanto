@@ -253,6 +253,60 @@ private func modelWithLoudChannel() async throws -> (EditorModel, SimulatedAmp, 
     #expect(model.currentChannel == 1)
 }
 
+/// The channel selects the amp received, in order.
+private func selects(in amp: SimulatedAmp) -> [Int] {
+    amp.received.compactMap { received in
+        (0...8).first { received.message == SysEx.dt1(.currentPatchNumber, data: [0, UInt8($0)], deviceID: 0) }
+    }
+}
+
+@MainActor
+@Test func requestsWhileASwitchLoadsWaitAndTheLatestWins() async throws {
+    let (model, amp, _) = try await modelWithLoudChannel()
+    // The first request runs until it waits for the amp; the next ones arrive meanwhile.
+    let first = Task { await model.requestSwitch(to: 5) }
+    await Task.yield()
+    await model.requestSwitch(to: 7)
+    await model.requestSwitch(to: 8)
+    #expect(model.switchTarget == 8)
+    await first.value
+    #expect(selects(in: amp) == [5, 8])
+    #expect(model.switchTarget == nil)
+    #expect(try await eventually { model.currentChannel == 8 })
+}
+
+@MainActor
+@Test func aRequestForTheChannelBeingLeftSwitchesBackAndOneForTheTargetSwitchesOnce() async throws {
+    let (model, amp, _) = try await modelWithLoudChannel()
+    let toFive = Task { await model.requestSwitch(to: 5) }
+    await Task.yield()
+    await model.requestSwitch(to: 1)
+    await toFive.value
+    #expect(selects(in: amp) == [5, 1])
+    #expect(try await eventually { model.currentChannel == 1 })
+    let toSeven = Task { await model.requestSwitch(to: 7) }
+    await Task.yield()
+    await model.requestSwitch(to: 8)
+    await model.requestSwitch(to: 7)
+    await toSeven.value
+    #expect(selects(in: amp) == [5, 1, 7])
+    #expect(model.switchTarget == nil)
+}
+
+@MainActor
+@Test func aRequestWhileAnAnsweredSwitchLoadsFollowsIt() async throws {
+    let (model, amp, _) = try await modelWithLoudChannel()
+    await model.requestSwitch(to: 6)
+    #expect(model.pendingSwitch?.slot == 6)
+    let answer = Task { await model.answerSwitch(true) }
+    await Task.yield()
+    await model.requestSwitch(to: 5)
+    await answer.value
+    #expect(selects(in: amp) == [6, 5])
+    #expect(model.switchTarget == nil)
+    #expect(try await eventually { model.currentChannel == 5 })
+}
+
 @MainActor
 @Test func savesRenamesAndSavesMadeOnTheAmpUpdateTheNames() async throws {
     let (model, amp, _) = try await modelWithLoudChannel()

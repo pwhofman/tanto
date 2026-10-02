@@ -121,12 +121,14 @@ private struct ChannelList: View {
 
     var body: some View {
         // Selecting asks the model. The highlight shows a switch on its way, then the channel the amp reports, so it falls
-        // back after a cancelled, refused or ignored switch.
+        // back after a cancelled, refused or ignored switch. During a switch the channel being left is a choice too.
         List(
             selection: Binding(
                 get: { model.switchTarget ?? model.currentChannel },
                 set: { slot in
-                    if let slot, slot != model.currentChannel { Task { await model.requestSwitch(to: slot) } }
+                    if let slot, slot != model.switchTarget ?? model.currentChannel {
+                        Task { await model.requestSwitch(to: slot) }
+                    }
                 })
         ) {
             Section("Channels") {
