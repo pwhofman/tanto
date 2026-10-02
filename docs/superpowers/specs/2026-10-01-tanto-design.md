@@ -152,8 +152,8 @@ Data flow:
 2. Every outgoing DT1 is one of: a parameter write that `SafetyGuard` produced from a user action; a whitelisted command
    (`7F 00 00 01` editor mode, `00 01 00 00` channel select, `7F 00 01 04` patch write); a press of the VARIATION or a
    colour button (`7F 01 01 00` to `05`, 3.5), which `SafetyGuard` soft-switches (5.3), or of a TAP (`06`, `07`); a
-   librarian write after confirmation: a save, or a rename or restore that writes stored channels 1–8 at `10 0n 00 00`
-   directly.
+   librarian write after confirmation (⌘S's save to the current channel needs none, 5.4): a save, or a rename or
+   restore that writes stored channels 1–8 at `10 0n 00 00` directly.
 3. Validation before sending: the address belongs to `ParameterMap`, the value is within range, the encoding and the
    checksum are correct. Anything else is refused and logged. The UI has no way to send raw SysEx.
 4. At most one message per 20 ms. A drag or scroll of a knob or slider sends only its latest value, and after Panic it
@@ -205,15 +205,19 @@ Patch-name edits and TAP, which changes only the delay time, are not soft-switch
 
 ### 5.4 Channels and memory
 
-- Switching channels from the app uses Tone Studio's select command (3.3), after up to two questions:
-  1. If the live patch has unsaved edits made in the app, a dialog asks before discarding them.
+- Switching channels from the app writes the channel number, as Tone Studio's channel list does (3.4), after up to two
+  questions:
+  1. If the live patch has unsaved edits, a dialog asks before discarding them. Edits made in the app count, and so do
+     the amp's own knobs: a change the amp reports counts, except in the 2 s after a channel change, when the amp sends
+     its dump of the new channel. The toolbar shows "Edited" and the sidebar a dot while there are such edits.
   2. Tanto reads the target channel from the amp. If a front-panel volume stored there lies above its ceiling, a dialog
      lists those values and asks first, with Cancel as the default button. The front-panel volumes are the VOLUME, GAIN,
      BOOSTER, MOD, FX, DELAY and REVERB knobs and the amp volume.
 
   Otherwise the switch happens directly, as with the amp's own channel buttons. A channel switch cannot be faded,
   because the amp loads the stored volume at once.
-- Saving the live sound to channel n (1–8) asks before overwriting. It waits until the guard's ramps are done, sends
+- Saving the live sound to channel n (1–8) from the context menu asks before overwriting; ⌘S saves to the current
+  channel at once, as an editor saves a document. It waits until the guard's ramps are done, sends
   Tone Studio's WRITE and waits for the amp's confirmation, then selects channel n as Tone Studio does. The sound does
   not change.
 - Renaming writes the 16-character name field of the stored channel, and for the current channel also the live name.
@@ -277,10 +281,12 @@ apply:
 One window in the system's light or dark appearance, with the system's window background and sidebar. It is arranged
 as BOSS TONE STUDIO arranges its editor and built from macOS's own controls.
 
-- Toolbar: connection status, current channel, Panic (red, Esc).
+- Toolbar: connection status, current channel and "Edited" while the live sound differs from it, Save (⌘S), Panic
+  (red, Esc).
 - Sidebar: PANEL, A1–A4 and B1–B4 with their names; the current channel is highlighted, and during a switch the channel
-  it goes to; clicking a channel switches to it (5.4), and a click during another switch is dropped. Context menu: "Save
-  Live Sound Here…", "Rename…". Backup and Restore are in the File menu.
+  it goes to; a dot marks the current channel while the live sound differs from it; clicking a channel switches to it
+  (5.4), and a click during another switch is dropped. Context menu: "Save Live Sound Here…", "Rename…". Backup and
+  Restore are in the File menu, with Save to the current channel (⌘S).
 - Editor:
   - The patch name.
   - The front panel, always shown: AMPLIFIER (VARIATION, AMP TYPE, GAIN, VOLUME), EQUALIZER (BASS, MIDDLE, TREBLE),

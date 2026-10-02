@@ -41,9 +41,24 @@ struct ContentView: View {
                     if let channel = model.currentChannel {
                         Text(EditorModel.channelLabel(channel)).monospaced()
                     }
+                    if model.hasUnsavedEdits {
+                        Text("Edited")
+                            .foregroundStyle(.secondary)
+                            .help("The live sound differs from the stored channel; ⌘S saves it there")
+                    }
                 }
                 .labelStyle(.titleAndIcon)
                 .padding(.horizontal, 8)
+            }
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    Task { await model.saveToCurrentChannel() }
+                } label: {
+                    Label("Save", systemImage: "square.and.arrow.down")
+                        .labelStyle(.titleAndIcon)
+                }
+                .disabled(!model.canSaveToCurrentChannel)
+                .help(model.currentChannel.map { "Save the live sound to \(EditorModel.channelLabel($0)) (⌘S)" } ?? "")
             }
             ToolbarItem(placement: .primaryAction) {
                 Button(role: .destructive) {
@@ -119,6 +134,13 @@ private struct ChannelList: View {
                     HStack {
                         Text(EditorModel.channelLabel(slot)).monospaced().foregroundStyle(.secondary)
                         Text(name)
+                        if slot == model.currentChannel, model.hasUnsavedEdits {
+                            Image(systemName: "circle.fill")
+                                .font(.system(size: 6))
+                                .foregroundStyle(.secondary)
+                                .help("Edited: the live sound differs from the stored channel")
+                                .accessibilityLabel("Edited")
+                        }
                     }
                     .tag(slot)
                     .contextMenu {

@@ -83,6 +83,9 @@ public enum LiveUpdate: Equatable, Sendable {
     case channel(Int)
     /// The amp saved the live patch to a channel on its own; `nil` if its message did not say which.
     case patchSaved(Int?)
+    /// The amp reported a change of the live patch that is not its dump after a channel change, e.g. a knob turned on
+    /// the amp; the live patch then differs from the stored channel.
+    case editedOnAmp
 }
 
 /// Timing of the conversation with the amp.
@@ -117,6 +120,8 @@ public actor AmpSession {
     public static let maxReadSize = 128
     /// How long a reply may arrive after its read has timed out and still count as a reply.
     static let lateReplyWindow = Duration.seconds(10)
+    /// How long after a channel change the amp's reports count as its dump of the new channel, not as edits.
+    static let dumpTime = Duration.seconds(2)
 
     /// Changes made on the amp itself, reported while connected.
     public nonisolated let changes: AsyncStream<AmpChange>
@@ -664,6 +669,10 @@ public actor AmpSession {
         patch.replaceSubrange(offset..<(offset + count), with: data.prefix(count))
         livePatch = patch
         updatesContinuation.yield(.bytes(offset: offset, data: Array(data.prefix(count))))
+        // The amp's dump follows its channel number within a second (hardware check 3).
+        if fromAmp, channelChangeTime.map({ clock.now - $0 > Self.dumpTime }) ?? true {
+            updatesContinuation.yield(.editedOnAmp)
+        }
     }
 
     private func startListening() {

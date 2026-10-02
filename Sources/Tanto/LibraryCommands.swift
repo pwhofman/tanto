@@ -3,11 +3,19 @@ import KatanaKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// The File menu's backup and restore of channels A1–B4 (design spec, section 7), with the system's panels.
+/// The File menu: saving the live sound to the current channel, and the backup and restore of channels A1–B4 (design
+/// spec, section 7), with the system's panels.
 struct LibraryCommands: Commands {
     let model: EditorModel
 
     var body: some Commands {
+        CommandGroup(replacing: .saveItem) {
+            Button(model.currentChannel.map { "Save to \(EditorModel.channelLabel($0))" } ?? "Save to Channel") {
+                Task { await model.saveToCurrentChannel() }
+            }
+            .keyboardShortcut("s")
+            .disabled(!model.canSaveToCurrentChannel)
+        }
         CommandGroup(after: .newItem) {
             Button("Back Up Channels…") { Task { await backUpChannels(model) } }
                 .disabled(model.connection != .connected)

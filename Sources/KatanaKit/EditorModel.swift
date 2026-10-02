@@ -84,6 +84,8 @@ public final class EditorModel {
     /// The channel a switch is on its way to, from the request until the switch is done, refused or cancelled; the
     /// sidebar highlights it meanwhile.
     public private(set) var switchTarget: Int?
+    /// Whether a save is under way; a save requested meanwhile is dropped.
+    public private(set) var isSaving = false
     /// The result or the error of the latest librarian action, as a message for the window.
     public private(set) var librarianMessage: String?
 
@@ -464,6 +466,7 @@ public final class EditorModel {
         do {
             try await safety.tap(button)
             tapRefusals[button] = nil
+            hasUnsavedEdits = true
         } catch {
             tapRefusals[button] = Self.message(for: error)
         }
@@ -518,11 +521,28 @@ public final class EditorModel {
         }
     }
 
-    /// Saves the live sound to a channel; the window has asked before overwriting it.
+    /// Whether ⌘S can save the live sound to the current channel: one of A1–B4 with unsaved edits, and no switch or save
+    /// under way.
+    public var canSaveToCurrentChannel: Bool {
+        connection == .connected && currentChannel.map { (1...8).contains($0) } == true && hasUnsavedEdits
+            && switchTarget == nil && !isSaving
+    }
+
+    /// Saves the live sound to the current channel at once, as ⌘S does (design spec, section 7).
+    public func saveToCurrentChannel() async {
+        guard canSaveToCurrentChannel, let slot = currentChannel else { return }
+        await save(to: slot)
+    }
+
+    /// Saves the live sound to a channel; the window has asked before overwriting it, except for ⌘S.
     ///
     /// - Parameter slot: 1–4 = A1–A4, 5–8 = B1–B4.
     public func save(to slot: Int) async {
         guard let librarian else { return notConnected() }
+        // The amp's confirmation is awaited one save at a time.
+        guard !isSaving else { return }
+        isSaving = true
+        defer { isSaving = false }
         do {
             channelNames[slot] = try await librarian.save(to: slot)
             librarianMessage = nil
@@ -699,6 +719,8 @@ public final class EditorModel {
             hasUnsavedEdits = false
         case .patchSaved(let slot):
             Task { await readNames(slot.map { [$0] } ?? Array(1...8)) }
+        case .editedOnAmp:
+            hasUnsavedEdits = true
         case .bytes(let offset, let data):
             for value in map.values(in: data, at: offset) {
                 values[value.parameter.offset] = value.value

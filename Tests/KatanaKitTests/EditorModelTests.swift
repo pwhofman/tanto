@@ -337,3 +337,44 @@ private func writes(to parameter: Parameter, in amp: SimulatedAmp) -> [Int] {
     await model.tap(.delay2)
     #expect(model.tapRefusals[.delay2] == "Not connected")
 }
+
+@MainActor
+@Test func aChangeOnTheAmpMarksTheLiveSoundEditedButTheDumpAfterASwitchDoesNot() async throws {
+    let (model, amp) = try await connectedModel()
+    let bass = try #require(model.map.parameter(block: "Status", prm: "PRM_KNOB_POS_BASS"))
+    #expect(!model.hasUnsavedEdits)
+    amp.sendFromAmp(SysEx.dt1(.temporaryPatch.advanced(by: bass.offset), data: [60], deviceID: amp.deviceID))
+    #expect(try await eventually { model.hasUnsavedEdits })
+    // A channel change on the amp: its number, then its dump of the new channel.
+    amp.sendFromAmp(SysEx.dt1(.currentPatchNumber, data: [0, 3], deviceID: amp.deviceID))
+    amp.sendFromAmp(SysEx.dt1(.temporaryPatch.advanced(by: bass.offset), data: [40], deviceID: amp.deviceID))
+    #expect(try await eventually { model.currentChannel == 3 && model.value(of: bass) == 40 })
+    #expect(!model.hasUnsavedEdits)
+}
+
+@MainActor
+@Test func aTapMarksTheLiveSoundEdited() async throws {
+    let (model, _) = try await connectedModel()
+    await model.tap(.delay)
+    #expect(model.hasUnsavedEdits)
+}
+
+@MainActor
+@Test func commandSSavesTheLiveSoundToTheCurrentChannelAtOnce() async throws {
+    let (model, amp) = try await connectedModel()
+    let bass = try #require(model.map.parameter(block: "Status", prm: "PRM_KNOB_POS_BASS"))
+    #expect(!model.canSaveToCurrentChannel)
+    await model.set(bass, to: 40)
+    await model.settle()
+    #expect(model.canSaveToCurrentChannel)
+    await model.saveToCurrentChannel()
+    #expect(amp.received.contains { $0.message == SysEx.dt1(Address(packed: 0x7F00_0104), data: [0, 1], deviceID: 0) })
+    let stored = amp.memory(at: Address.userPatch(1).advanced(by: bass.offset), count: 1)
+    #expect(bass.value(fromRaw: bass.encoding.decode(stored)) == 40)
+    #expect(try await eventually { !model.hasUnsavedEdits })
+    // PANEL is never written.
+    await model.requestSwitch(to: 0)
+    #expect(try await eventually { model.currentChannel == 0 })
+    await model.set(bass, to: 30)
+    #expect(!model.canSaveToCurrentChannel)
+}
