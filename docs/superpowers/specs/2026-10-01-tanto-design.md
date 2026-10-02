@@ -49,8 +49,9 @@ Sources in Tone Studio's `Contents/Resources/html/js/`: `config/product_setting.
   - RQ1 (read): `F0 41 10 00 00 00 33 11 a3 a2 a1 a0 s3 s2 s1 s0 cs F7`
   - DT1 (write): `F0 41 10 00 00 00 33 12 a3 a2 a1 a0 d… cs F7`
   - `cs = (128 − (sum of address and size/data bytes) mod 128) mod 128`
-- Identity request: `F0 7E 7F 06 01 F7`. Tone Studio accepts a reply whose bytes 0–1 are `F0 7E` and bytes 3–7 are
-  `06 02 41 33 03`.
+- Identity request: `F0 7E 7F 06 01 F7`. Tone Studio accepts a reply whose bytes 0–1 are `F0 7E`, bytes 3–7 are
+  `06 02 41 33 03` and byte 10 is a Katana MkII model code from `05` to `0B`. Tanto accepts only `06`, the
+  Katana-100 MkII, the only model it has been tried on.
 - Tone Studio leaves 20 ms between outgoing messages, splits reads into chunks of at most 128 data bytes
   (`SYSEX_MAXLEN`) and times out reads after 15 s. Tanto uses the same 128-byte limit for writes.
 - Tone Studio's connect sequence: identity request, after which it uses the device ID from the reply; RQ1

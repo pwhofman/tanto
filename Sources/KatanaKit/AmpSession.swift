@@ -2,7 +2,7 @@ import os
 
 /// Errors from talking to the amp.
 public enum AmpError: Error, Equatable, Sendable {
-    /// The identity reply does not come from a Katana MkII.
+    /// The identity reply does not come from a Katana-100 MkII, the only model Tanto supports so far.
     case notAKatana([UInt8])
     /// No identity reply arrived, also not after one retry.
     case noIdentityReply
@@ -236,7 +236,7 @@ public actor AmpSession {
     /// The copy of the live patch starts empty.
     ///
     /// - Returns: What the amp reported.
-    /// - Throws: `AmpError` if the amp does not answer, is not a Katana MkII or uses another communication level.
+    /// - Throws: `AmpError` if the amp does not answer, is not a Katana-100 MkII or uses another communication level.
     public func connect() async throws -> ConnectionInfo {
         startListening()
         forgetLivePatch()

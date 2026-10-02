@@ -53,6 +53,14 @@ private let realIdentityReply: [UInt8] = [
     #expect(!SysEx.isKatanaIdentityReply(otherModel))
 }
 
+// Tone Studio accepts every Katana MkII; Tanto has been tried only on the Katana-100 MkII.
+@Test(arguments: [UInt8(0x05), 0x07, 0x0B])
+func refusesTheOtherKatanaMkIIModels(code: UInt8) {
+    var reply = realIdentityReply
+    reply[10] = code
+    #expect(!SysEx.isKatanaIdentityReply(reply))
+}
+
 @Test func otherMessagesAreOther() {
     #expect(IncomingMessage([0xF0, 0x43, 0x10, 0xF7]) == .other([0xF0, 0x43, 0x10, 0xF7]))
     #expect(IncomingMessage(SysEx.identityRequest) == .other(SysEx.identityRequest))

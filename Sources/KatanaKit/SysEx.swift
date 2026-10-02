@@ -49,14 +49,15 @@ public enum SysEx {
         return header(deviceID) + [dt1Command] + body + [checksum(body), 0xF7]
     }
 
-    /// Whether `message` is a Katana MkII identity reply, by Tone Studio's check: bytes 0–1 are `F0 7E`, bytes 3–7
-    /// are `06 02 41 33 03`, and byte 10 is a Katana MkII model code from `05` to `0B` (`06` is the Katana-100 MkII).
+    /// Whether `message` is the identity reply of a Katana-100 MkII: bytes 0–1 are `F0 7E`, bytes 3–7 are
+    /// `06 02 41 33 03`, and byte 10 is the model code `06`. Tone Studio accepts every Katana MkII model code from `05` to
+    /// `0B`; Tanto has been tried only on the Katana-100 MkII.
     ///
     /// - Parameter message: A complete SysEx message.
-    /// - Returns: `true` for a Katana MkII.
+    /// - Returns: `true` for a Katana-100 MkII.
     public static func isKatanaIdentityReply(_ message: [UInt8]) -> Bool {
         message.count >= 11 && message[0...1] == [0xF0, 0x7E] && message[3...7] == [0x06, 0x02, 0x41, 0x33, 0x03]
-            && (0x05...0x0B).contains(message[10])
+            && message[10] == 0x06
     }
 }
 

@@ -41,6 +41,16 @@ private let quickTimeout = SessionTiming(spacing: .milliseconds(20), readTimeout
     #expect(amp.received.map(\.message) == [SysEx.identityRequest])
 }
 
+@Test func connectRejectsAKatanaMkIIOtherThanTheKatana100() async throws {
+    var reply = SimulatedAmp.katanaIdentityReply
+    reply[10] = 0x07
+    let amp = SimulatedAmp(map: try .bundled(), identityReply: reply)
+    await #expect(throws: AmpError.notAKatana(reply)) {
+        try await AmpSession(transport: amp).connect()
+    }
+    #expect(amp.received.map(\.message) == [SysEx.identityRequest])
+}
+
 @Test func readsAreSplitIntoRequestsOf128Bytes() async throws {
     let amp = SimulatedAmp(map: try .bundled())
     let session = AmpSession(transport: amp)
