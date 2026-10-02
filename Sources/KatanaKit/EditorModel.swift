@@ -86,6 +86,27 @@ public final class EditorModel {
     public private(set) var switchTarget: Int?
     /// Whether a save is under way; a save requested meanwhile is dropped.
     public private(set) var isSaving = false
+    // Tanto's edits of the live sound for Undo and Redo, newest last. Panic, a channel change and connecting clear them.
+    private var undoEdits: [Edit] = []
+    private var redoEdits: [Edit] = []
+
+    // An edit for Undo or Redo: the state to go back to, and when it was made, so that a drag's steps join.
+    private struct Edit {
+        enum Change: Equatable {
+            /// A value: a knob, menu or switch, an effect's colour, DELAY TIME after taps.
+            case value(Parameter, Int)
+            /// The panel's CONTOUR knob, which sets two parameters.
+            case contour(Int)
+            /// The live sound's name.
+            case name(String)
+            /// VARIATION, which only its button toggles.
+            case variation
+        }
+
+        var change: Change
+        // `nil` for an undone or redone edit, which a new edit does not join.
+        var time: ContinuousClock.Instant?
+    }
     /// The result or the error of the latest librarian action, as a message for the window.
     public private(set) var librarianMessage: String?
 
@@ -270,6 +291,8 @@ public final class EditorModel {
         librarian = nil
         pendingSwitch = nil
         switchTarget = nil
+        undoEdits = []
+        redoEdits = []
         connection = .notConnected
     }
 
@@ -295,6 +318,8 @@ public final class EditorModel {
         librarian = nil
         pendingSwitch = nil
         switchTarget = nil
+        undoEdits = []
+        redoEdits = []
         connection = .notConnected
     }
 
@@ -360,16 +385,27 @@ public final class EditorModel {
     ///   - parameter: A parameter from `pages` or the front panel.
     ///   - value: The displayed value.
     public func set(_ parameter: Parameter, to value: Int) async {
+        let panics = panicCount
+        let before = values[parameter.offset]
+        if await write(parameter, to: value), let before, before != value {
+            record(.value(parameter, before), since: panics)
+        }
+    }
+
+    // `set(_:to:)` without noting the edit for Undo; `false` if it was refused.
+    private func write(_ parameter: Parameter, to value: Int) async -> Bool {
         guard let safety else {
             refusals[parameter.offset] = "Not connected"
-            return
+            return false
         }
         do {
             try await safety.set(parameter, to: value)
             refusals[parameter.offset] = nil
             hasUnsavedEdits = true
+            return true
         } catch {
             refusals[parameter.offset] = Self.message(for: error)
+            return false
         }
     }
 
@@ -388,14 +424,24 @@ public final class EditorModel {
     ///
     /// - Parameter choice: 0 for OFF, 1–3 for a contour.
     public func setContour(_ choice: Int) async {
+        let panics = panicCount
+        let before = contour
+        await applyContour(choice)
+        if let before, before != choice {
+            record(.contour(before), since: panics)
+        }
+    }
+
+    // `setContour(_:)` without noting the edit for Undo.
+    private func applyContour(_ choice: Int) async {
         guard let (onOff, select) = contourParameters else { return }
         let panics = panicCount
         let on = (value(of: onOff) ?? onOff.minimum) != onOff.minimum
         if (choice > 0) != on {
-            await set(onOff, to: choice > 0 ? onOff.maximum : onOff.minimum)
+            _ = await write(onOff, to: choice > 0 ? onOff.maximum : onOff.minimum)
         }
         guard choice > 0, panicCount == panics else { return }
-        await set(select, to: select.minimum + choice - 1)
+        _ = await write(select, to: select.minimum + choice - 1)
     }
 
     // CONTOUR SW and CONTOUR SELECT, which the panel's CONTOUR knob sets together.
@@ -418,23 +464,55 @@ public final class EditorModel {
     ///
     /// - Parameter button: A panel button.
     public func press(_ button: PanelButton) async {
+        let panics = panicCount
+        let selection = colourSelection(of: button)
+        let before = selection.flatMap { values[$0.offset] }
+        guard await pressNow(button) else { return }
+        if button == .variation {
+            record(.variation, since: panics)
+        } else if let selection, let before {
+            record(.value(selection, before), since: panics)
+        }
+    }
+
+    // `press(_:)` without noting the edit for Undo; `false` if it was refused.
+    private func pressNow(_ button: PanelButton) async -> Bool {
         guard let safety else {
             buttonRefusals[button] = "Not connected"
-            return
+            return false
         }
         do {
             try await safety.press(button)
             buttonRefusals[button] = nil
             hasUnsavedEdits = true
+            return true
         } catch {
             buttonRefusals[button] = Self.message(for: error)
+            return false
         }
+    }
+
+    // The colour selection that a colour button moves, as Tone Studio's EFFECTS page writes it; `nil` for VARIATION.
+    private func colourSelection(of button: PanelButton) -> Parameter? {
+        let effect: String? =
+            switch button {
+            case .variation: nil
+            case .booster: "BOOST"
+            case .mod: "MOD"
+            case .fx: "FX"
+            case .delay: "DELAY"
+            case .reverb: "REVERB"
+            }
+        return effect.flatMap { map.parameter(block: "Patch_2", prm: "PRM_FXBOX_SEL_\($0)") }
     }
 
     /// Panic: the VOLUME knob to 0 as the next message (design spec, section 5.5). While connecting, VOLUME 0 goes out
     /// as soon as the amp is in editor mode.
     public func panic() async {
         panicCount += 1
+        // An undo must never bring back what Panic took away.
+        undoEdits = []
+        redoEdits = []
         let volumeKnob = map.parameter(block: "Status", prm: "PRM_KNOB_POS_VOLUME")
         // A session still waiting for its turn to connect sends VOLUME 0 as soon as editor mode is on.
         if let upcoming, let volumeKnob {
@@ -463,10 +541,16 @@ public final class EditorModel {
             tapRefusals[button] = "Not connected"
             return
         }
+        let panics = panicCount
+        let time = map.parameter(block: button.block, prm: "PRM_DLY_COMMON_DLY_TIME")
+        let before = time.flatMap { values[$0.offset] }
         do {
             try await safety.tap(button)
             tapRefusals[button] = nil
             hasUnsavedEdits = true
+            if let time, let before {
+                record(.value(time, before), since: panics)
+            }
         } catch {
             tapRefusals[button] = Self.message(for: error)
         }
@@ -476,16 +560,109 @@ public final class EditorModel {
     ///
     /// - Parameter name: At most 16 characters from space to `}`.
     public func rename(to name: String) async {
+        let panics = panicCount
+        let before = liveName
+        if await renameNow(name), before != name {
+            record(.name(before), since: panics)
+        }
+    }
+
+    // `rename(to:)` without noting the edit for Undo; `false` if it was refused.
+    private func renameNow(_ name: String) async -> Bool {
         guard let safety else {
             nameRefusal = "Not connected"
-            return
+            return false
         }
         do {
             try await safety.rename(to: name)
             nameRefusal = nil
             hasUnsavedEdits = true
+            return true
         } catch {
             nameRefusal = Self.message(for: error)
+            return false
+        }
+    }
+
+    /// What Undo would undo, e.g. "BASS"; `nil` if there is nothing to undo.
+    public var undoTitle: String? {
+        undoEdits.last.map { Self.title(of: $0.change) }
+    }
+
+    /// What Redo would redo; `nil` if there is nothing to redo.
+    public var redoTitle: String? {
+        redoEdits.last.map { Self.title(of: $0.change) }
+    }
+
+    /// Undoes Tanto's last edit of the live sound. It goes through `SafetyGuard` as any edit: ceilings, ramps and the
+    /// soft switch apply.
+    public func undo() async {
+        guard let edit = undoEdits.popLast() else { return }
+        if let now = state(like: edit.change) {
+            redoEdits.append(Edit(change: now, time: nil))
+        }
+        await restore(edit.change)
+    }
+
+    /// Does the last undone edit again, as `undo()` does.
+    public func redo() async {
+        guard let edit = redoEdits.popLast() else { return }
+        if let now = state(like: edit.change) {
+            undoEdits.append(Edit(change: now, time: nil))
+        }
+        await restore(edit.change)
+    }
+
+    // Notes an edit for Undo, unless Panic came meanwhile. An edit of the same thing less than a second after the last
+    // joins it, so that a drag or a scroll is one step; VARIATION's presses stay apart, as each one toggles.
+    private func record(_ before: Edit.Change, since panics: Int) {
+        guard panicCount == panics else { return }
+        let now = ContinuousClock.now
+        redoEdits = []
+        if before != .variation, let last = undoEdits.last, let time = last.time, now - time < .seconds(1),
+            state(like: last.change).map({ Self.sameThing($0, before) }) == true
+        {
+            undoEdits[undoEdits.count - 1].time = now
+        } else {
+            undoEdits.append(Edit(change: before, time: now))
+        }
+    }
+
+    // The present state of what `change` changes; `nil` if a value is not known.
+    private func state(like change: Edit.Change) -> Edit.Change? {
+        switch change {
+        case .value(let parameter, _): values[parameter.offset].map { .value(parameter, $0) }
+        case .contour: contour.map(Edit.Change.contour)
+        case .name: .name(liveName)
+        case .variation: .variation
+        }
+    }
+
+    private static func sameThing(_ a: Edit.Change, _ b: Edit.Change) -> Bool {
+        switch (a, b) {
+        case (.value(let first, _), .value(let second, _)): first == second
+        case (.contour, .contour), (.name, .name): true
+        default: false
+        }
+    }
+
+    private func restore(_ change: Edit.Change) async {
+        switch change {
+        case .value(let parameter, let value): _ = await write(parameter, to: value)
+        case .contour(let choice): await applyContour(choice)
+        case .name(let name): _ = await renameNow(name)
+        case .variation: _ = await pressNow(.variation)
+        }
+    }
+
+    private static func title(of change: Edit.Change) -> String {
+        switch change {
+        case .value(let parameter, _):
+            // The colour selections have no label of their own.
+            parameter.label.isEmpty ? "\(parameter.section?.uppercased() ?? "") COLOR" : parameter.label
+        case .contour: "CONTOUR"
+        case .name: "Name"
+        case .variation: "VARIATION"
         }
     }
 
@@ -717,6 +894,8 @@ public final class EditorModel {
         case .channel(let channel):
             currentChannel = channel
             hasUnsavedEdits = false
+            undoEdits = []
+            redoEdits = []
         case .patchSaved(let slot):
             Task { await readNames(slot.map { [$0] } ?? Array(1...8)) }
         case .editedOnAmp:

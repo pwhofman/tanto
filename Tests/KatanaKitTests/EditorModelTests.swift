@@ -378,3 +378,80 @@ private func writes(to parameter: Parameter, in amp: SimulatedAmp) -> [Int] {
     await model.set(bass, to: 30)
     #expect(!model.canSaveToCurrentChannel)
 }
+
+@MainActor
+@Test func undoPutsBackAWholeDragAndRedoDoesItAgain() async throws {
+    let (model, _) = try await connectedModel()
+    let bass = try #require(model.map.parameter(block: "Status", prm: "PRM_KNOB_POS_BASS"))
+    let start = try #require(model.value(of: bass))
+    // A drag: steps less than a second apart are one edit.
+    for value in [start - 5, start - 10, start - 15] {
+        await model.set(bass, to: value)
+    }
+    await model.settle()
+    #expect(model.undoTitle == "BASS" && model.redoTitle == nil)
+    await model.undo()
+    await model.settle()
+    #expect(try await eventually { model.value(of: bass) == start })
+    #expect(model.undoTitle == nil && model.redoTitle == "BASS")
+    await model.redo()
+    await model.settle()
+    #expect(try await eventually { model.value(of: bass) == start - 15 })
+    #expect(model.undoTitle == "BASS" && model.redoTitle == nil)
+}
+
+@MainActor
+@Test func panicAndAChannelChangeClearTheEditHistory() async throws {
+    let (model, _) = try await connectedModel()
+    let bass = try #require(model.map.parameter(block: "Status", prm: "PRM_KNOB_POS_BASS"))
+    await model.set(bass, to: 40)
+    await model.panic()
+    #expect(model.undoTitle == nil)
+    await model.set(bass, to: 30)
+    #expect(model.undoTitle == "BASS")
+    await model.requestSwitch(to: 2)
+    await model.answerSwitch(true)
+    #expect(try await eventually { model.currentChannel == 2 })
+    #expect(model.undoTitle == nil)
+}
+
+@MainActor
+@Test func undoCoversTheNameContourAndVariation() async throws {
+    let (model, _) = try await connectedModel()
+    await model.rename(to: "TEST")
+    #expect(model.undoTitle == "Name")
+    await model.undo()
+    #expect(try await eventually { model.liveName == "SIM LIVE" })
+
+    await model.setContour(2)
+    await model.settle()
+    #expect(model.undoTitle == "CONTOUR")
+    await model.undo()
+    await model.settle()
+    #expect(try await eventually { model.contour == 0 })
+
+    let variation = try #require(model.led(of: .variation))
+    await model.press(.variation)
+    #expect(try await eventually { model.value(of: variation) == 1 })
+    await model.undo()
+    #expect(try await eventually { model.value(of: variation) == 0 })
+}
+
+// A colour button changes the colour of an effect that is on; undo selects the colour before.
+@MainActor
+@Test func undoSelectsTheColourBeforeAPress() async throws {
+    let map = try ParameterMap.bundled()
+    let amp = SimulatedAmp(map: map)
+    let volume = try #require(map.parameter(block: "Status", prm: "PRM_KNOB_POS_VOLUME"))
+    let led = try #require(map.parameter(block: "Status", prm: "PRM_LED_STATE_BOOST"))
+    let selection = try #require(map.parameter(block: "Patch_2", prm: "PRM_FXBOX_SEL_BOOST"))
+    amp.setMemory([30], at: .temporaryPatch.advanced(by: volume.offset))
+    amp.setMemory([1], at: .temporaryPatch.advanced(by: led.offset))
+    let model = EditorModel(map: map)
+    await model.connect(amp)
+    await model.press(.booster)
+    #expect(try await eventually { model.value(of: selection) == 1 })
+    #expect(model.undoTitle == "BOOSTER COLOR")
+    await model.undo()
+    #expect(try await eventually { model.value(of: selection) == 0 && model.value(of: led) == 1 })
+}

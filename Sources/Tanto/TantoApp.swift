@@ -27,6 +27,7 @@ struct TantoApp: App {
         .defaultSize(width: 1400, height: 900)
         .commands {
             LibraryCommands(model: model)
+            EditCommands(model: model)
         }
         Settings {
             SettingsView(model: model)

@@ -235,7 +235,8 @@ all of them would come with almost every switch.
 Toolbar button and the Esc key. Panic clears the outgoing queue, cancels all ramps and sets the VOLUME knob
 (`60 00 06 52`) to 0 in the next message slot. Like turning the real VOLUME knob down, this sets the amp volume
 (`60 00 00 28`) to 0, as hardware check 1 showed. The volume stays at 0 until raised by hand, which is ramped and limited
-by the ceiling. Panic changes only the live patch; stored channels are untouched.
+by the ceiling. Panic changes only the live patch; stored channels are untouched. It also clears Undo's history
+(section 6), so that no undo brings back what Panic took away.
 
 VOLUME 0 goes ahead of every queued message, also while a read waits for its reply, and nothing decided before Panic is
 sent after it; requests still being decided are refused. While connecting, VOLUME 0 goes out as soon as the amp is in
@@ -318,6 +319,11 @@ as BOSS TONE STUDIO arranges its editor and built from macOS's own controls.
   Three rules go further than Tone Studio: the momentum after the fingers lift turns nothing; a scroll that began over
   the page, or begins within 0.5 s of the page's last scroll, scrolls the page; AMP TYPE and CONTOUR send their choice
   once the drag ends or the wheel has rested for 0.3 s, so one soft switch follows instead of one per step.
+- Undo and Redo (⌘Z, ⇧⌘Z) step through Tanto's edits of the live sound: values, colours, CONTOUR, VARIATION, the name
+  and TAP's delay time. A drag or a scroll is one step: edits of the same thing less than a second apart join. Every
+  undo is an ordinary edit through `SafetyGuard`, with ceilings, ramps and soft switches. Panic, a channel change and
+  connecting clear the history; switches, saves and restores are not undone. The Edit menu's Undo applies in the name
+  field too.
 - Settings window: the ceiling percentage.
 
 ## 7. Librarian
