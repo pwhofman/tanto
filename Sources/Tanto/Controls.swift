@@ -53,9 +53,10 @@ struct ContourKnob: View {
 }
 
 /// A knob, or for the graphic EQs a vertical slider, with its value and label below. Dragging or scrolling turns it
-/// (`ScrollRules`). A guarded control stops at the higher of its ceiling and its current value (design spec, section 6),
-/// and a drag or scroll that Panic interrupted sends nothing more. A knob with positions, such as AMP TYPE, sends its
-/// choice when the drag ends or the wheel rests.
+/// (`ScrollRules`), and so do the arrow keys once a drag has given the knob the keyboard focus. A guarded control stops
+/// at the higher of its ceiling and its current value (design spec, section 6), and a drag, scroll or key press that
+/// Panic interrupted sends nothing more. A knob with positions, such as AMP TYPE, sends its choice when the drag ends or
+/// the wheel or keys rest.
 private struct KnobView: View {
     let model: EditorModel
     let value: Int
@@ -70,6 +71,7 @@ private struct KnobView: View {
     @State private var dragged: Int?
     @State private var dragPanics: Int?
     @State private var wheelRest: Task<Void, Never>?
+    @FocusState private var focused: Bool
 
     private static let sliderHeight = 120.0
     // A scroll ends as a drag's release does once the wheel has rested this long.
@@ -90,6 +92,14 @@ private struct KnobView: View {
                     valueText: text(shown), onChange: change(to:), onTracking: track
                 )
                 .turnsWhenScrolled(stepPoints: Dial.travel / span) { turn(by: $0, stop: stop) }
+                .focusable(interactions: .edit)
+                .focused($focused)
+                // Up and right turn up, as dragging up does; Shift takes ten steps.
+                .onKeyPress(keys: [.upArrow, .rightArrow, .downArrow, .leftArrow]) { press in
+                    let step = press.modifiers.contains(.shift) ? 10 : 1
+                    turn(by: press.key == .upArrow || press.key == .rightArrow ? step : -step, stop: stop)
+                    return .handled
+                }
             }
             Text(text(shown))
                 .font(.callout).monospacedDigit()
@@ -118,6 +128,7 @@ private struct KnobView: View {
         wheelRest?.cancel()
         wheelRest = nil
         if tracking {
+            focused = true
             dragPanics = model.panicCount
         } else {
             if positions != nil, let dragged, !isInterrupted, dragged != value {
@@ -128,7 +139,8 @@ private struct KnobView: View {
         }
     }
 
-    // A scroll turns the control as a drag does, and ends as the drag's release does once the wheel rests.
+    // A scroll or a key press turns the control as a drag does, and ends as the drag's release does once the wheel or the
+    // keys rest.
     private func turn(by steps: Int, stop: Int) {
         if dragPanics == nil {
             track(true)
