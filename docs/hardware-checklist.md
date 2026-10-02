@@ -154,7 +154,9 @@ Before starting: POWER CONTROL at 0.5 W, MASTER at minimum, BOSS TONE STUDIO clo
 4. Change something small in Tanto, e.g. BASS. Then choose "Save Live Sound Here…" in the scratch channel's context
    menu: the amp confirms, and Tanto selects the scratch channel.
 5. Rename the scratch channel from its context menu. The sidebar shows the new name.
-6. Look through the front panel and every page, and say what to change (plan 4, task 7).
+6. Look through the front panel and every page, and say what to change (plan 4, task 7). Then turn BASS down a few
+   steps and back with the scroll wheel or the trackpad: each notch is one step, the momentum after a flick turns
+   nothing, and scrolling the page past a knob leaves it alone.
 7. EFFECTS page, an effect that is on: click another colour's marker. VOLUME dips, the amp changes to that colour,
    and the panel's LED and the marker follow. Tanto's first write of a colour selection (`PRM_FXBOX_SEL_*`).
 8. EFFECTS page: tap DELAY's TAP twice, about half a second apart. The time under it follows the interval; the
@@ -180,6 +182,7 @@ Afterwards, switch to another channel and back.
 | Save Live Sound Here…: confirmed, channel selected | |
 | Rename: new name in the sidebar | |
 | The window: remarks on the panel and the pages | |
+| Scrolling: BASS turns; momentum and page scrolls leave knobs alone | |
 | Colour marker: VOLUME dips, the amp changes colour, LED and marker follow | |
 | TAP: the time follows the taps, VOLUME stays | |
 | Restore: written, read back the same; scratch channel restored | |

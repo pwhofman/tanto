@@ -155,8 +155,8 @@ Data flow:
    confirmation: a save, or a rename or restore that writes stored channels 1–8 at `10 0n 00 00` directly.
 3. Validation before sending: the address belongs to `ParameterMap`, the value is within range, the encoding and the
    checksum are correct. Anything else is refused and logged. The UI has no way to send raw SysEx.
-4. At most one message per 20 ms. A slider drag sends only its latest value, and after Panic it sends nothing until
-   it ends.
+4. At most one message per 20 ms. A drag or scroll of a knob or slider sends only its latest value, and after Panic it
+   sends nothing until it ends.
 
 ### 5.2 Guarded parameters
 
@@ -304,6 +304,12 @@ as BOSS TONE STUDIO arranges its editor and built from macOS's own controls.
   CONTOUR), a vertical slider for the graphic EQs, a switch, a pop-up menu or radio buttons. Values are in display
   units (formatters from `layout.div`, e.g. `+3`, `320 ms`). A guarded control stops at the higher of its ceiling and
   its current value and shows "max …" below it; a refusal of `SafetyGuard` shows below the control.
+- Knobs and sliders turn by dragging them up or down, or by scrolling over them, which then does not scroll the page,
+  as in Tone Studio. A mouse wheel turns one step per notch, as in Tone Studio; a trackpad turns as far as a drag over
+  the same distance. Up turns up: the direction the fingers or the wheel move, whatever the natural-scrolling setting.
+  Three rules go further than Tone Studio: the momentum after the fingers lift turns nothing; a scroll that began over
+  the page, or begins within 0.5 s of the page's last scroll, scrolls the page; AMP TYPE and CONTOUR send their choice
+  once the drag ends or the wheel has rested for 0.3 s, so one soft switch follows instead of one per step.
 - Settings window: the ceiling percentage.
 
 ## 7. Librarian

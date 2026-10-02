@@ -52,9 +52,10 @@ struct ContourKnob: View {
     }
 }
 
-/// A knob, or for the graphic EQs a vertical slider, with its value and label below. A guarded control stops at the
-/// higher of its ceiling and its current value (design spec, section 6), and a drag that Panic interrupted sends
-/// nothing more. A knob with positions, such as AMP TYPE, sends its choice when the drag ends.
+/// A knob, or for the graphic EQs a vertical slider, with its value and label below. Dragging or scrolling turns it
+/// (`ScrollRules`). A guarded control stops at the higher of its ceiling and its current value (design spec, section 6),
+/// and a drag or scroll that Panic interrupted sends nothing more. A knob with positions, such as AMP TYPE, sends its
+/// choice when the drag ends or the wheel rests.
 private struct KnobView: View {
     let model: EditorModel
     let value: Int
@@ -68,36 +69,27 @@ private struct KnobView: View {
     let set: (Int) async -> Void
     @State private var dragged: Int?
     @State private var dragPanics: Int?
+    @State private var wheelRest: Task<Void, Never>?
+
+    private static let sliderHeight = 120.0
+    // A scroll ends as a drag's release does once the wheel has rested this long.
+    private static let wheelRestTime = Duration.milliseconds(300)
 
     var body: some View {
         let stop = ceiling.map { max($0, value) } ?? range.upperBound
-        let interrupted = dragPanics.map { $0 != model.panicCount } ?? false
-        let shown = interrupted ? value : dragged ?? value
-        let onChange = { (new: Int) in
-            dragged = new
-            if positions == nil, !interrupted {
-                Task { await set(new) }
-            }
-        }
-        let onTracking = { (tracking: Bool) in
-            if tracking {
-                dragPanics = model.panicCount
-            } else {
-                if positions != nil, let dragged, !interrupted, dragged != value {
-                    Task { await set(dragged) }
-                }
-                dragged = nil
-                dragPanics = nil
-            }
-        }
+        let shown = isInterrupted ? value : dragged ?? value
+        let span = Double(max(range.upperBound - range.lowerBound, 1))
         VStack(spacing: 2) {
             if vertical {
-                VerticalSlider(value: shown, range: range, stop: stop, onChange: onChange, onTracking: onTracking)
-                    .frame(width: 24, height: 120)
+                VerticalSlider(value: shown, range: range, stop: stop, onChange: change(to:), onTracking: track)
+                    .frame(width: 24, height: Self.sliderHeight)
+                    .turnsWhenScrolled(stepPoints: Self.sliderHeight / span) { turn(by: $0, stop: stop) }
             } else {
                 Dial(
                     value: shown, range: range, stop: stop, ceiling: ceiling, positions: positions, label: label,
-                    valueText: text(shown), onChange: onChange, onTracking: onTracking)
+                    valueText: text(shown), onChange: change(to:), onTracking: track
+                )
+                .turnsWhenScrolled(stepPoints: Dial.travel / span) { turn(by: $0, stop: stop) }
             }
             Text(text(shown))
                 .font(.callout).monospacedDigit()
@@ -106,6 +98,54 @@ private struct KnobView: View {
             if let ceiling {
                 Text("max \(text(ceiling))").font(.caption2).foregroundStyle(.tertiary)
             }
+        }
+    }
+
+    // Read when used, not when the view was drawn, so that a Panic since then counts, also at the release after the
+    // wheel rests.
+    private var isInterrupted: Bool {
+        dragPanics.map { $0 != model.panicCount } ?? false
+    }
+
+    private func change(to new: Int) {
+        dragged = new
+        if positions == nil, !isInterrupted {
+            Task { await set(new) }
+        }
+    }
+
+    private func track(_ tracking: Bool) {
+        wheelRest?.cancel()
+        wheelRest = nil
+        if tracking {
+            dragPanics = model.panicCount
+        } else {
+            if positions != nil, let dragged, !isInterrupted, dragged != value {
+                Task { await set(dragged) }
+            }
+            dragged = nil
+            dragPanics = nil
+        }
+    }
+
+    // A scroll turns the control as a drag does, and ends as the drag's release does once the wheel rests.
+    private func turn(by steps: Int, stop: Int) {
+        if dragPanics == nil {
+            track(true)
+        }
+        let current = dragged ?? value
+        let new = min(max(current + steps, range.lowerBound), stop)
+        if new != current {
+            change(to: new)
+        }
+        wheelRest?.cancel()
+        wheelRest = Task {
+            do {
+                try await Task.sleep(for: Self.wheelRestTime)
+            } catch {
+                return  // Cancelled: a later step waits anew.
+            }
+            track(false)
         }
     }
 }
@@ -139,7 +179,7 @@ private struct Dial: View {
     @Environment(\.isEnabled) private var isEnabled
 
     // Dragging this far turns the knob through its whole travel.
-    private static let travel = 200.0
+    static let travel = 200.0
 
     var body: some View {
         let origin = range.contains(0) && range.lowerBound < 0 ? 0 : range.lowerBound
