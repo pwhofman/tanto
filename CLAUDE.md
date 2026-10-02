@@ -16,10 +16,12 @@ Hardware checks: `docs/hardware-checklist.md`.
 - Format: `swift format --in-place --recursive Sources Tests Package.swift`; check with
   `swift format lint --recursive Sources Tests Package.swift`.
 - App: `scripts/build-app.sh` builds `build/Tanto.app` with the icon from `Icon/`; `--install` copies it to
-  `/Applications`. On a branch other than main it builds `build/Tanto Dev.app` instead, with its own app ID and
-  settings, and does not install. For development,
-  `open build/Tanto.app --args -simulated YES` runs it against `SimulatedAmp`, and `-snapshot FILE` added to that saves
-  the window as a PNG and quits. Keep the file outside `~/Documents`, which would ask the user for access.
+  `/Applications`, and `--dmg` also makes `build/Tanto-<version>.dmg` for a release (main, nothing uncommitted). On a
+  branch other than main it builds `build/Tanto Dev.app` instead, with its own app ID and settings, and neither
+  installs nor makes a DMG. For development,
+  `open -n build/Tanto.app --args -simulated YES` runs it against `SimulatedAmp` (`-n`, because the installed Tanto may
+  be running), and `-snapshot FILE` added to that saves the window as a PNG and quits. Keep the file outside
+  `~/Documents`, which would ask the user for access.
 - Probe: `swift run TantoProbe` lists MIDI endpoints and sends nothing; `--connect` talks to the amp (hardware check 1).
 - Parameter table: `uv run --directory tools python gen_parameter_map.py` regenerates
   `Sources/KatanaKit/Resources/parameters.json` from the installed Tone Studio. Checks: `uv run --directory tools pytest`,

@@ -1,6 +1,6 @@
 # Tanto: Katana MkII editor for macOS — design
 
-Date: 2026-10-01. Status: approved in brainstorming, awaiting spec review.
+Date: 2026-10-01. Status: describes version 0.1.0.
 
 ## 1. Goal
 
@@ -429,12 +429,13 @@ scripts/build-app.sh     builds Tanto.app
 docs/
 ```
 
-- `scripts/build-app.sh` builds a release binary with SwiftPM and assembles `Tanto.app`: `Info.plist`, an `.icns` icon
-  made with macOS's `iconutil`, ad-hoc `codesign`. Copying it to `/Applications` is a separate, explicit step. The
-  package opens in Xcode for editing and debugging.
+- `scripts/build-app.sh` builds a release binary with SwiftPM and assembles `Tanto.app`: `Info.plist`, the icon from
+  `Icon/AppIcon.icns`, ad-hoc `codesign`. Copying it to `/Applications` is a separate, explicit step (`--install`).
+  `--dmg` makes a release's disk image, `Tanto-<version>.dmg`, with the app and a shortcut to Applications; the app is
+  not notarized, so its first start needs Open Anyway in System Settings. The package opens in Xcode for editing and
+  debugging.
 - Deployment target macOS 15, the oldest the code compiles for; developed and tested only on macOS 27. CoreMIDI needs
   no sandbox or special entitlements.
-- The folder is not a git repository yet; whether to create one is decided at the start of implementation.
 
 ## 11. Later milestones
 
@@ -442,10 +443,6 @@ docs/
 - Global settings and controller assignments. The guard then extends to system levels: global EQ level, cab EQ level,
   USB levels.
 - Visual design.
-- A simulator that sounds: try out settings without the amp by playing a guitar, or a recorded dry track, through a
-  model of the Katana's amp and effects in Tanto itself. Today's `SimulatedAmp` only answers MIDI messages and makes no
-  sound. This needs its own design: which parts of the amp to model, how closely, and how it stays apart from the safety
-  rules for the real amp.
 
 ## Appendix A: guarded parameters
 
