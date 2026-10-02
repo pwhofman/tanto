@@ -91,6 +91,40 @@ private func knob(_ prm: String) throws -> Parameter {
     }
 }
 
+// A rise follows the hand: one message goes as far as a full sweep in half a second allows at the 20 ms spacing, 4 units
+// of VOLUME, and no further than the request (design spec, section 5.2).
+@Test func risesFollowTheHandUpToAFullSweepInHalfASecond() async throws {
+    let volume = try knob("PRM_KNOB_POS_VOLUME")
+    let rig = try await Rig(rampDuration: SafetyGuard.fullSweep, prepare: setLive(30, volume))
+    try await rig.safety.set(volume, to: 33)
+    await rig.safety.settle()
+    #expect(rig.writes(to: volume).map(\.value) == [33])
+    let start = rig.amp.received.count
+    try await rig.safety.set(volume, to: 50)
+    await rig.safety.settle()
+    let writes = rig.writes(to: volume, after: start)
+    #expect(writes.map(\.value) == [37, 41, 45, 49, 50])
+    for (earlier, later) in zip(writes, writes.dropFirst()) {
+        #expect(later.time - earlier.time >= .milliseconds(20))  // 0.5 s · 4 / 100
+    }
+}
+
+@Test func withTheGradualRiseOffARiseGoesOutAtOnce() async throws {
+    let volume = try knob("PRM_KNOB_POS_VOLUME")
+    let boost = try knob("PRM_KNOB_POS_BOOST")
+    let rig = try await Rig(rampDuration: SafetyGuard.fullSweep, prepare: setLive([(5, volume), (-1, boost)]))
+    await rig.safety.setGradualRise(false)
+    try await rig.safety.set(volume, to: 45)
+    await rig.safety.settle()
+    #expect(rig.writes(to: volume).map(\.value) == [45])
+    // A soft switch still dips VOLUME; VOLUME comes back at once.
+    let start = rig.amp.received.count
+    try await rig.safety.set(boost, to: 30)
+    await rig.safety.settle()
+    #expect(rig.writes(to: volume, after: start).map(\.value) == [0, 45])
+    #expect(rig.writes(to: boost, after: start).map(\.value) == [0, 30])
+}
+
 @Test func rampsOfBipolarParametersStopAtZeroDecibels() async throws {
     let lowGain = try #require(ParameterMap.bundled().parameter(block: "Patch_0", prm: "PRM_EQ_LOW_GAIN"))
     let rig = try await Rig(prepare: setLive(-3, lowGain))

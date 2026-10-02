@@ -16,17 +16,23 @@ private struct SplitMix64: RandomNumberGenerator {
     }
 }
 
+/// How far one message may raise a parameter (design spec, section 5.2).
+private func riseStep(of parameter: Parameter, spacing: Duration, rampDuration: Duration) -> Int {
+    max(1, Int((Double(parameter.maximum - parameter.minimum) * (spacing / rampDuration)).rounded()))
+}
+
 // Random requests against the simulated amp; the recorded messages must keep the guard's promises (design spec,
-// section 5): only parameters Tone Studio writes, guarded values rise one step at a time, never faster than the ramp
-// and never above the ceiling, switch and picker changes only while VOLUME reads 0, and VOLUME 0 right after Panic.
-@Test(arguments: [1, 2, 3] as [UInt64])
-func randomRequestsKeepTheSafetyRules(seed: UInt64) async throws {
+// section 5): only parameters Tone Studio writes, guarded values rise at most one step per message and never faster
+// than a full sweep in the ramp's time, never above the ceiling, switch and picker changes only while VOLUME reads 0,
+// and VOLUME 0 right after Panic. A short ramp makes the steps several units.
+@Test(arguments: zip([1, 2, 3] as [UInt64], [200, 200, 20]))
+func randomRequestsKeepTheSafetyRules(seed: UInt64, rampMilliseconds: Int) async throws {
     let map = try ParameterMap.bundled()
     let amp = SimulatedAmp(map: map)
     let session = AmpSession(transport: amp, timing: SessionTiming(spacing: .milliseconds(1), readTimeout: .seconds(1)))
     _ = try await session.connect()
     try await session.readLivePatch(map)
-    let rampDuration = Duration.milliseconds(200)
+    let rampDuration = Duration.milliseconds(rampMilliseconds)
     let safety = try SafetyGuard(session: session, map: map, rampDuration: rampDuration)
     let volume = try #require(map.parameter(block: "Status", prm: "PRM_KNOB_POS_VOLUME"))
     // Start with a moderate volume, so that soft switches are allowed and ramp back up.
@@ -80,6 +86,7 @@ func randomRequestsKeepTheSafetyRules(seed: UInt64) async throws {
     var dataSetIndex = 0
     var switchChanges = 0
     var rampSteps = 0
+    var largestRise = 0
     for message in received {
         guard case .dataSet(let address, let data) = IncomingMessage(message.message) else { continue }
         dataSetIndex += 1
@@ -92,12 +99,14 @@ func randomRequestsKeepTheSafetyRules(seed: UInt64) async throws {
             message.previous.map { parameter.value(fromRaw: parameter.encoding.decode($0)) } ?? value(at: parameter)
         if let louder = parameter.louder, parameter.kind == .numeric, louder == .up ? new > old : new < old {
             rampSteps += 1
-            #expect(abs(new - old) == 1, "\(parameter.prm) jumped from \(old) to \(new)")
+            largestRise = max(largestRise, abs(new - old))
+            let step = riseStep(of: parameter, spacing: session.timing.spacing, rampDuration: rampDuration)
+            #expect(abs(new - old) <= step, "\(parameter.prm) jumped from \(old) to \(new)")
             if let ceiling = await safety.ceiling(of: parameter) {
                 #expect(new <= ceiling, "\(parameter.prm) rose to \(new), above its ceiling \(ceiling)")
             }
             if let last = lastTime[offset] {
-                let interval = rampDuration / (parameter.maximum - parameter.minimum)
+                let interval = rampDuration * abs(new - old) / (parameter.maximum - parameter.minimum)
                 #expect(message.time - last >= interval, "\(parameter.prm) got louder too fast")
             }
         }
@@ -125,6 +134,8 @@ func randomRequestsKeepTheSafetyRules(seed: UInt64) async throws {
     #expect(dataSetIndex > 200, "\(dataSetIndex) writes")
     #expect(switchChanges > 10, "\(switchChanges) switch changes")
     #expect(rampSteps > 50, "\(rampSteps) ramp steps")
+    let volumeStep = riseStep(of: volume, spacing: session.timing.spacing, rampDuration: rampDuration)
+    #expect(volumeStep == 1 || largestRise > 1, "no rise of several units")
     #expect(panics.count > 5, "\(panics.count) panics")
 }
 
@@ -140,12 +151,12 @@ private final class Messages: Sendable {
 }
 
 // Random requests while knobs are turned and channels are switched on the amp. Every write is checked when it goes out,
-// against what the session knew at that moment: guarded values rise one step at a time, not faster than the ramp and
-// not above the ceiling unless they fall; switch and picker changes go out only while VOLUME is 0; and while the copy
+// against what the session knew at that moment: guarded values rise at most one step per message, not faster than the
+// ramp and not above the ceiling unless they fall; switch and picker changes go out only while VOLUME is 0; and while the copy
 // of the live patch is incomplete only VOLUME 0 goes out. In the end no guarded value is above both its ceiling and the
 // highest value the amp itself set (design spec, sections 5.2, 5.3 and 5.8).
-@Test(arguments: [4, 5, 6] as [UInt64])
-func randomRequestsWithChangesOnTheAmpKeepTheSafetyRules(seed: UInt64) async throws {
+@Test(arguments: zip([4, 5, 6] as [UInt64], [200, 200, 20]))
+func randomRequestsWithChangesOnTheAmpKeepTheSafetyRules(seed: UInt64, rampMilliseconds: Int) async throws {
     let map = try ParameterMap.bundled()
     let amp = SimulatedAmp(map: map)
     let volume = try #require(map.parameter(block: "Status", prm: "PRM_KNOB_POS_VOLUME"))
@@ -160,7 +171,7 @@ func randomRequestsWithChangesOnTheAmpKeepTheSafetyRules(seed: UInt64) async thr
         transport: transport, timing: SessionTiming(spacing: .milliseconds(1), readTimeout: .seconds(1)))
     _ = try await session.connect()
     try await session.readLivePatch(map)
-    let rampDuration = Duration.milliseconds(200)
+    let rampDuration = Duration.milliseconds(rampMilliseconds)
     let safety = try SafetyGuard(session: session, map: map, rampDuration: rampDuration)
 
     let violations = Messages()
@@ -197,11 +208,14 @@ func randomRequestsWithChangesOnTheAmpKeepTheSafetyRules(seed: UInt64) async thr
             louder == .up ? new > known : new < known
         {
             kinds.append("rise")
-            if abs(new - known) > 1 { violations.append("\(parameter.prm) jumped from \(known) to \(new)") }
+            if abs(new - known) > riseStep(of: parameter, spacing: session.timing.spacing, rampDuration: rampDuration) {
+                violations.append("\(parameter.prm) jumped from \(known) to \(new)")
+            }
             if let ceiling = Ceiling.value(of: parameter, percent: 50), new > ceiling {
                 violations.append("\(parameter.prm) rose to \(new), above its ceiling \(ceiling)")
             }
-            if let previous, now - previous < rampDuration / (parameter.maximum - parameter.minimum) {
+            if let previous, now - previous < rampDuration * abs(new - known) / (parameter.maximum - parameter.minimum)
+            {
                 violations.append("\(parameter.prm) got louder too fast")
             }
         }

@@ -26,8 +26,8 @@ public enum SafetyError: Error, Equatable, Sendable {
 ///
 /// All writes go through one pump, one message at a time, in this order: the VOLUME dips of soft switches and the
 /// guard's own corrections, the changes of soft switches, changes that make the amp quieter, and finally those that
-/// make it louder. A change in the direction that makes a parameter louder (`Parameter.louder`) goes one unit at a
-/// time, at least `rampDuration / (maximum - minimum)` apart; a guarded parameter never rises above its ceiling. A
+/// make it louder. A change in the direction that makes a parameter louder (`Parameter.louder`) rises no faster than a
+/// full sweep in `rampDuration`, unless the gradual rise is off; a guarded parameter never rises above its ceiling. A
 /// soft-switch change is only sent while the VOLUME knob is at 0. Panic goes to the session directly and passes
 /// everything.
 ///
@@ -43,9 +43,14 @@ public actor SafetyGuard {
     static let crossingWindow = Duration.milliseconds(100)
     /// How long a parameter must be quiet before the guard reads it back after a possible crossing.
     static let quietPeriod = Duration.milliseconds(150)
+    /// The shortest time in which the gradual rise lets a parameter get louder across its whole range (design spec,
+    /// section 5.2).
+    public static let fullSweep = Duration.milliseconds(500)
 
     /// The ceiling as a percentage of a guarded parameter's travel.
     public private(set) var ceilingPercent: Int
+    /// Whether rises are gradual; without, they go out at once, as decreases do.
+    public private(set) var gradualRise: Bool
 
     private let session: AmpSession
     private let map: ParameterMap
@@ -109,7 +114,8 @@ public actor SafetyGuard {
         case channel(Int)
     }
 
-    /// Creates a guard with the ramp of the design spec: a full sweep of a guarded parameter takes at least 2 s.
+    /// Creates a guard with the gradual rise of the design spec: a full sweep of a guarded parameter takes at least
+    /// `fullSweep`.
     ///
     /// - Parameters:
     ///   - session: The connection, with the live patch read.
@@ -120,7 +126,7 @@ public actor SafetyGuard {
     ///   20 ms.
     public init(session: AmpSession, map: ParameterMap, ceilingPercent: Int = 50) throws {
         guard session.timing.spacing >= SessionTiming.katana.spacing else { throw SafetyError.invalidTiming }
-        try self.init(session: session, map: map, ceilingPercent: ceilingPercent, rampDuration: .seconds(2))
+        try self.init(session: session, map: map, ceilingPercent: ceilingPercent, rampDuration: Self.fullSweep)
     }
 
     /// Creates a guard with any ramp duration and without checking the session's spacing; for tests and for
@@ -131,8 +137,12 @@ public actor SafetyGuard {
     ///   - map: The bundled parameter table.
     ///   - ceilingPercent: The ceiling, 0–100 in steps of 5.
     ///   - rampDuration: How long a full sweep of a guarded parameter takes at least.
+    ///   - gradualRise: Whether rises are gradual.
     /// - Throws: `SafetyError.invalidCeiling` or `.invalidTable`.
-    init(session: AmpSession, map: ParameterMap, ceilingPercent: Int = 50, rampDuration: Duration) throws {
+    init(
+        session: AmpSession, map: ParameterMap, ceilingPercent: Int = 50, rampDuration: Duration,
+        gradualRise: Bool = true
+    ) throws {
         guard Ceiling.isValid(percent: ceilingPercent) else { throw SafetyError.invalidCeiling(ceilingPercent) }
         guard let volumeKnob = map.parameter(block: "Status", prm: "PRM_KNOB_POS_VOLUME"), volumeKnob.guarded,
             volumeKnob.kind == .numeric
@@ -153,6 +163,7 @@ public actor SafetyGuard {
         self.volumeKnob = volumeKnob
         self.ceilingPercent = ceilingPercent
         self.rampDuration = rampDuration
+        self.gradualRise = gradualRise
     }
 
     /// Changes the ceiling. Values already above a lower ceiling stay; they can only be lowered.
@@ -162,6 +173,14 @@ public actor SafetyGuard {
     public func setCeilingPercent(_ percent: Int) throws {
         guard Ceiling.isValid(percent: percent) else { throw SafetyError.invalidCeiling(percent) }
         ceilingPercent = percent
+    }
+
+    /// Turns the gradual rise on or off; a rise under way goes on under the new rule.
+    ///
+    /// - Parameter on: Whether rises are gradual.
+    public func setGradualRise(_ on: Bool) {
+        gradualRise = on
+        startPump()
     }
 
     /// The highest value Tanto may raise a guarded parameter to (`Ceiling.value(of:percent:)`).
@@ -463,12 +482,17 @@ public actor SafetyGuard {
                 finish(offset)
             } else if parameter.louder == nil {
                 steps.append(Write(parameter: parameter, value: target, priority: .normal, basis: basis))
-            } else if let ceiling = ceiling(of: parameter), quietest + 1 > ceiling {
+            } else if let ceiling = ceiling(of: parameter), quietest >= ceiling {
                 logger.notice("\(parameter.prm, privacy: .public) reached its ceiling; ramp stopped")
                 finish(offset)
             } else if isDue(parameter) {
-                // One step louder than the quietest value the amp may hold.
-                let step = parameter.louder == .down ? quietest - 1 : quietest + 1
+                // Louder than the quietest value the amp may hold by as much as the rise allows, and no further than
+                // the target and the ceiling.
+                let rise = gradualRise ? riseStep(of: parameter) : parameter.maximum - parameter.minimum
+                var step = parameter.louder == .down ? max(quietest - rise, target) : min(quietest + rise, target)
+                if let ceiling = ceiling(of: parameter) {
+                    step = min(step, ceiling)
+                }
                 steps.append(Write(parameter: parameter, value: step, priority: .normal, basis: basis))
             }
         }
@@ -625,9 +649,19 @@ public actor SafetyGuard {
         possibleValues(parameter, view).max { loudness($0, parameter) < loudness($1, parameter) }
     }
 
-    // When the next step of a ramp may go out; `nil` if the parameter never was written, so it may go now.
+    // How far one message may raise a parameter: as far as a full sweep in `rampDuration` gets in the session's spacing,
+    // at least one unit.
+    private func riseStep(of parameter: Parameter) -> Int {
+        let range = parameter.maximum - parameter.minimum
+        return max(1, Int((Double(range) * (session.timing.spacing / rampDuration)).rounded()))
+    }
+
+    // When the next step of a rise may go out, so that the parameter gets louder no faster than a full sweep in
+    // `rampDuration`; `nil` if it may go now: the parameter was never written, or the gradual rise is off.
     private func dueTime(of parameter: Parameter) -> ContinuousClock.Instant? {
-        lastWriteTime[parameter.offset]?.advanced(by: rampDuration / (parameter.maximum - parameter.minimum))
+        guard gradualRise else { return nil }
+        let range = parameter.maximum - parameter.minimum
+        return lastWriteTime[parameter.offset]?.advanced(by: rampDuration * riseStep(of: parameter) / range)
     }
 
     private func isDue(_ parameter: Parameter) -> Bool {

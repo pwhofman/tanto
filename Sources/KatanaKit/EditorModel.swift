@@ -74,6 +74,8 @@ public final class EditorModel {
     public private(set) var tapRefusals: [TapButton: String] = [:]
     /// The ceiling as a percentage of a guarded parameter's travel, or `nil` without a ceiling.
     public private(set) var ceilingPercent: Int? = 50
+    /// Whether guarded values rise gradually (design spec, section 5.2); without, rises go out at once.
+    public private(set) var gradualRise = true
     /// How often Panic was pressed; a slider ignores the rest of a drag that a Panic interrupted.
     public private(set) var panicCount = 0
     /// Whether the live patch has changed since a channel was last loaded or saved, in Tanto or on the amp; switching
@@ -210,7 +212,8 @@ public final class EditorModel {
             try await session.readLivePatch(map)
             liveName = await session.liveName() ?? ""
             let safety = try SafetyGuard(
-                session: session, map: map, ceilingPercent: ceilingPercent ?? 100, rampDuration: .seconds(2))
+                session: session, map: map, ceilingPercent: ceilingPercent ?? 100, rampDuration: SafetyGuard.fullSweep,
+                gradualRise: gradualRise)
             self.safety = safety
             librarian = Librarian(session: session, safety: safety, map: map)
             hasUnsavedEdits = false
@@ -906,6 +909,22 @@ public final class EditorModel {
         if let percent, !Ceiling.isValid(percent: percent) { throw SafetyError.invalidCeiling(percent) }
         try await safety?.setCeilingPercent(percent ?? 100)
         ceilingPercent = percent
+    }
+
+    /// Whether changing the gradual rise needs the user's confirmation: turning it off does, turning it on does not.
+    ///
+    /// - Parameter on: The new setting.
+    /// - Returns: `true` when turning it off.
+    public func needsConfirmation(toSetGradualRise on: Bool) -> Bool {
+        gradualRise && !on
+    }
+
+    /// Turns the gradual rise on or off.
+    ///
+    /// - Parameter on: Whether guarded values rise gradually.
+    public func setGradualRise(_ on: Bool) async {
+        await safety?.setGradualRise(on)
+        gradualRise = on
     }
 
     /// Waits until every accepted request has been written; for tests.

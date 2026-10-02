@@ -142,7 +142,7 @@ private func connectedModel() async throws -> (EditorModel, SimulatedAmp) {
 }
 
 @MainActor
-@Test func withoutACeilingGuardedValuesStillRiseOneStepAtATime() async throws {
+@Test func withoutACeilingGuardedValuesStillRiseGradually() async throws {
     let (model, amp) = try await connectedModel()
     let volume = try #require(model.map.parameter(block: "Status", prm: "PRM_KNOB_POS_VOLUME"))
     try await model.setCeilingPercent(nil)
@@ -150,7 +150,23 @@ private func connectedModel() async throws -> (EditorModel, SimulatedAmp) {
     await model.set(volume, to: 55)
     await model.settle()
     #expect(model.refusals[volume.offset] == nil)
-    #expect(writes(to: volume, in: amp) == Array(31...55))
+    // At most 4 units a message: a full sweep in half a second at the 20 ms spacing.
+    #expect(writes(to: volume, in: amp) == [34, 38, 42, 46, 50, 54, 55])
+}
+
+@MainActor
+@Test func turningTheGradualRiseOffNeedsConfirmationAndSendsRisesAtOnce() async throws {
+    let (model, amp) = try await connectedModel()
+    let volume = try #require(model.map.parameter(block: "Status", prm: "PRM_KNOB_POS_VOLUME"))
+    #expect(model.gradualRise)
+    #expect(model.needsConfirmation(toSetGradualRise: false))
+    #expect(!model.needsConfirmation(toSetGradualRise: true))
+    await model.setGradualRise(false)
+    #expect(!model.gradualRise)
+    #expect(!model.needsConfirmation(toSetGradualRise: true))
+    await model.set(volume, to: 45)
+    await model.settle()
+    #expect(writes(to: volume, in: amp) == [45])
 }
 
 @MainActor

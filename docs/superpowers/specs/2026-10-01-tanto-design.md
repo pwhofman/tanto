@@ -189,8 +189,12 @@ stays unguarded: lowering it fills in the dips of the tremolo without raising it
   control returns to the amp's value. Values are never clipped silently.
 - A value that is already above the ceiling (set on the amp, or stored in a patch) is shown with a warning. It can be
   lowered but not raised.
-- Increases are ramped in steps of one raw unit, at least `2 s / (max − min)` apart, so a full sweep takes at least 2 s.
-  The 20 ms pacing can only make a ramp slower.
+- Increases rise gradually, no faster than a full sweep in 0.5 s. One message raises a value by at most
+  `round((max − min) · 20 ms / 0.5 s)` raw units, at least one (4 for a knob from 0 to 100), and the next message to
+  the same parameter waits `0.5 s · step / (max − min)`. A turn slower than that reaches the amp as it is made; a jump,
+  such as a click at the far end of a knob, a typed value or an undo, becomes a swell of at most 0.5 s. The 20 ms pacing
+  can only make a rise slower. Settings can turn the gradual rise off, after confirmation: increases then go out at
+  once, as decreases do.
 - Decreases take the next message slot through the priority lane, ahead of queued increases, and cancel any ramp of the
   same parameter. The 20 ms spacing applies to every message, including priority ones.
 - Moving an effect knob (BOOSTER, MOD, FX, DELAY, REVERB) between −1 and 0 or more switches its effect on or off, as
@@ -199,8 +203,13 @@ stays unguarded: lowering it fills in the dips of the tremolo without raising it
 
 The user made the ceiling optional on 2026-10-02. MASTER and POWER CONTROL already limit the speaker and the PHONES jack
 (5.6), and at 50 % the ceiling allowed no EQ boost and only half of GAIN. It remains for LINE OUT and USB, which MASTER
-does not limit. The gradual rise, the soft switch (5.3) and Panic (5.5) stay on, so no guarded value that Tanto writes
-jumps up; a channel switch still loads the stored volumes at once (5.4).
+does not limit. The soft switch (5.3) and Panic (5.5) stay on, and so does the gradual rise unless it is turned off, so
+no guarded value that Tanto writes jumps up; a channel switch still loads the stored volumes at once (5.4).
+
+The same day the user found the rise too slow for turning knobs: one unit per message took 2 s for a full sweep,
+however fast the knob turned. Tone Studio sends each value as a dial moves, paced only by its queue of one message
+about every 25 ms (`js/item/dial_controller.js`, `js/common/parameter.js`, `js/common/midi_controller.js`). The rise
+now follows the hand up to a full sweep in 0.5 s, and Settings can turn it off.
 
 ### 5.3 Switches and pickers
 
@@ -212,7 +221,7 @@ colour assignments and selections, chain, block positions, contour, cabinet reso
    first".
 2. The VOLUME knob is set to 0 at once.
 3. The change is sent.
-4. The VOLUME knob ramps back to its previous value under the rules of 5.2.
+4. The VOLUME knob comes back to its previous value under the rules of 5.2.
 
 Patch-name edits and TAP, which changes only the delay time, are not soft-switched.
 
@@ -249,8 +258,8 @@ all of them would come with almost every switch.
 
 Toolbar button and the Esc key. Panic clears the outgoing queue, cancels all ramps and sets the VOLUME knob
 (`60 00 06 52`) to 0 in the next message slot. Like turning the real VOLUME knob down, this sets the amp volume
-(`60 00 00 28`) to 0, as hardware check 1 showed. The volume stays at 0 until raised by hand, which is ramped and limited
-by the ceiling. Panic changes only the live patch; stored channels are untouched. It also clears Undo's history
+(`60 00 00 28`) to 0, as hardware check 1 showed. The volume stays at 0 until raised by hand, under the rules of 5.2.
+Panic changes only the live patch; stored channels are untouched. It also clears Undo's history
 (section 6), so that no undo brings back what Panic took away.
 
 VOLUME 0 goes ahead of every queued message, also while a read waits for its reply, and nothing decided before Panic is
@@ -356,7 +365,7 @@ as BOSS TONE STUDIO arranges its editor and built from macOS's own controls.
   undo is an ordinary edit through `SafetyGuard`, with ceilings, ramps and soft switches. Panic, a channel change and
   connecting clear the history; switches, saves and restores are not undone. The Edit menu's Undo applies in the name
   field too.
-- Settings window: the ceiling, off until turned on, and its percentage.
+- Settings window: the ceiling, off until turned on, and its percentage; the gradual rise, on until turned off.
 
 ## 7. Librarian
 

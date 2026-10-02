@@ -50,6 +50,7 @@ struct TantoApp: App {
         } catch {
             Logger.app.error("stored ceiling rejected: \(error)")
         }
+        await model.setGradualRise(StoredSettings.gradualRise)
         if UserDefaults.standard.bool(forKey: "simulated") {
             await model.connect(SimulatedAmp(map: model.map))
             if let path = UserDefaults.standard.string(forKey: "snapshot") {
@@ -91,6 +92,7 @@ enum StoredSettings {
     private static let ceilingOnKey = "ceilingOn"
     private static let ceilingPercentKey = "ceilingPercent"
     private static let safetyNoticeKey = "safetyNoticeConfirmed"
+    private static let gradualRiseKey = "gradualRise"
 
     /// Whether the user has confirmed the safety notice; until then Tantō shows it at launch and does not look for
     /// the amp.
@@ -112,6 +114,12 @@ enum StoredSettings {
     /// changes it.
     static var lastCeilingPercent: Int {
         UserDefaults.standard.object(forKey: ceilingPercentKey) as? Int ?? 50
+    }
+
+    /// Whether guarded values rise gradually; on until the user turns it off.
+    static var gradualRise: Bool {
+        get { UserDefaults.standard.object(forKey: gradualRiseKey) as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: gradualRiseKey) }
     }
 }
 

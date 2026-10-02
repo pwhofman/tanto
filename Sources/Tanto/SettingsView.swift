@@ -1,11 +1,12 @@
 import KatanaKit
 import SwiftUI
 
-/// Settings: the ceiling, off until the user turns it on. Raising it or turning it off asks for confirmation (design
-/// spec, section 5.2).
+/// Settings: the gradual rise, on until the user turns it off, and the ceiling, off until the user turns it on. Turning
+/// the rise off, raising the ceiling or turning it off asks for confirmation (design spec, section 5.2).
 struct SettingsView: View {
     let model: EditorModel
     @State private var confirming: Change?
+    @State private var confirmingRiseOff = false
     @State private var error: String?
 
     /// A change of the ceiling that waits for confirmation: a new percentage, or `nil` to turn the ceiling off.
@@ -18,6 +19,19 @@ struct SettingsView: View {
         let percent = model.ceilingPercent ?? StoredSettings.lastCeilingPercent
         // A column rather than a Form, whose columns would part the checkbox from the stepper and cut the text short.
         VStack(alignment: .leading, spacing: 10) {
+            Toggle("Raise gradually", isOn: Binding(get: { model.gradualRise }, set: requestRise))
+                .confirmationDialog("Turn the gradual rise off?", isPresented: $confirmingRiseOff) {
+                    Button("Turn Off") { applyRise(false) }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("Without it, Tantō sends a jump, such as a typed value or an undo, to the amp at once.")
+                }
+            Text(
+                "Tantō raises VOLUME, GAIN, levels and the other guarded controls no faster than a full sweep in half a second, so that a jump becomes a short swell; a knob turned at a normal pace is not slowed. Off, every value goes out at once, as in Tone Studio."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
             Toggle(
                 "Ceiling",
                 isOn: Binding(
@@ -32,7 +46,7 @@ struct SettingsView: View {
             .disabled(model.ceilingPercent == nil)
             .padding(.leading, 20)
             Text(
-                "Tantō always raises VOLUME, GAIN, levels and the other guarded controls gradually; a ceiling also keeps them below a share of their travel. The amp's MASTER knob limits the speaker and the PHONES jack, but not LINE OUT and USB: turn the ceiling on when those feed a PA, monitors or headphones."
+                "A ceiling keeps VOLUME, GAIN, levels and the other guarded controls below a share of their travel. The amp's MASTER knob limits the speaker and the PHONES jack, but not LINE OUT and USB: turn the ceiling on when those feed a PA, monitors or headphones."
             )
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -57,6 +71,21 @@ struct SettingsView: View {
                 confirming?.percent == nil
                     ? "Without a ceiling, Tantō can raise the guarded controls to their maximum."
                     : "A higher ceiling lets Tantō make the amp louder.")
+        }
+    }
+
+    private func requestRise(_ on: Bool) {
+        if model.needsConfirmation(toSetGradualRise: on) {
+            confirmingRiseOff = true
+        } else {
+            applyRise(on)
+        }
+    }
+
+    private func applyRise(_ on: Bool) {
+        Task {
+            await model.setGradualRise(on)
+            StoredSettings.gradualRise = on
         }
     }
 
