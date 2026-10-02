@@ -40,6 +40,7 @@ public final class SimulatedAmp: MIDITransport {
         var received: [Received] = []
         var answersReads = true
         var confirmsSaves = true
+        var sendsDumps = true
         let identityReply: [UInt8]
         var crossingKnobTurn: (address: Address, value: [UInt8])?
         var lastTap: [TapButton: ContinuousClock.Instant] = [:]
@@ -128,7 +129,8 @@ public final class SimulatedAmp: MIDITransport {
                 {
                     let slot = Int(data[1])
                     if address == .currentPatchNumber {
-                        reports = load(slot, &state.memory)
+                        let dump = load(slot, &state.memory)
+                        if state.sendsDumps { reports = dump }
                     } else {
                         copy(from: .temporaryPatch, to: .userPatch(slot), &state.memory)
                         if state.confirmsSaves {
@@ -232,6 +234,13 @@ public final class SimulatedAmp: MIDITransport {
         for message in messages {
             continuation.yield(message)
         }
+    }
+
+    /// Stops or resumes sending the channel number and the patch after a select, to test the reads that replace them.
+    ///
+    /// - Parameter sends: Whether a select gets them.
+    public func setSendsDumps(_ sends: Bool) {
+        state.withLock { $0.sendsDumps = sends }
     }
 
     /// Stops or resumes confirming saves, to test the save timeout.

@@ -120,7 +120,8 @@ public actor AmpSession {
     public static let maxReadSize = 128
     /// How long a reply may arrive after its read has timed out and still count as a reply.
     static let lateReplyWindow = Duration.seconds(10)
-    /// How long after a channel change the amp's reports count as its dump of the new channel, not as edits.
+    /// How long after a channel change the amp's reports count as its dump of the new channel, not as edits; a select
+    /// waits as long for the dump before it reads the channel instead.
     static let dumpTime = Duration.seconds(2)
 
     /// Changes made on the amp itself, reported while connected.
@@ -138,6 +139,11 @@ public actor AmpSession {
     // A save that waits for the amp's confirmation.
     private var saveWaiter: (id: Int, continuation: CheckedContinuation<Void, any Error>)?
     private var saveCount = 0
+    // A select that waits for the amp's channel number and its dump of the new patch, and the channel the amp has
+    // reported since the select went out.
+    private var dumpWaiter: (id: Int, slot: Int, continuation: CheckedContinuation<Bool, Never>)?
+    private var dumpWaitCount = 0
+    private var reportedChannel: Int?
     // The bytes of the patch's blocks, and those the amp has not reported since its last channel change. The copy is
     // valid once it has been read and none is left.
     private var blockBytes: [Range<Int>] = []
@@ -325,9 +331,11 @@ public actor AmpSession {
             reportedValue: reports.value, generation: generation, panics: panics)
     }
 
-    /// Selects a channel by writing its number, as Tone Studio's channel list does, then reads the channel number and
-    /// the live patch back, whether or not the amp also sends its dump. Everything decided on the old channel is dropped
-    /// before the write goes out: the copy of the live patch is invalid until the new channel has been read.
+    /// Selects a channel by writing its number, as Tone Studio's channel list does. The amp answers with its channel
+    /// number and a dump of the new patch, which take about 0.3 s, and leaves reads unanswered meanwhile (hardware check
+    /// 3), so the select waits for them; only if they have not come within `dumpTime` does it read the channel number
+    /// and the live patch back. Everything decided on the old channel is dropped before the write goes out: the copy of
+    /// the live patch is invalid until the new patch has arrived.
     ///
     /// - Parameter slot: 0 = PANEL, 1–4 = A1–A4, 5–8 = B1–B4.
     /// - Throws: `WriteError.noSuchChannel`; `AmpError.timeout` if a read gets no reply; an error from the transport.
@@ -336,9 +344,12 @@ public actor AmpSession {
         generation += 1
         uncovered = Set(blockBytes.joined())
         try await sendCommand(SysEx.dt1(.currentPatchNumber, data: [0, UInt8(slot)], deviceID: deviceID))
-        updatesContinuation.yield(.channel(try await readCurrentChannel()))
-        for range in blockBytes {
-            try await readIntoCopy(offset: range.lowerBound, size: range.count)
+        if await !dumpArrives(for: slot, within: Self.dumpTime) {
+            logger.notice("no dump of channel \(slot) after selecting it; reading it back")
+            updatesContinuation.yield(.channel(try await readCurrentChannel()))
+            for range in blockBytes {
+                try await readIntoCopy(offset: range.lowerBound, size: range.count)
+            }
         }
         if let livePatch {
             updatesContinuation.yield(.bytes(offset: 0, data: livePatch))
@@ -649,8 +660,10 @@ public actor AmpSession {
                 generation += 1
                 channelChangeTime = clock.now
                 uncovered = Set(blockBytes.joined())
+                reportedChannel = channel
             }
             updatesContinuation.yield(.channel(channel))
+            resumeDumpWaiter()
             return
         }
         let offset = address.linear - Address.temporaryPatch.linear
@@ -672,6 +685,9 @@ public actor AmpSession {
         // The amp's dump follows its channel number within a second (hardware check 3).
         if fromAmp, channelChangeTime.map({ clock.now - $0 > Self.dumpTime }) ?? true {
             updatesContinuation.yield(.editedOnAmp)
+        }
+        if fromAmp {
+            resumeDumpWaiter()
         }
     }
 
@@ -782,6 +798,37 @@ public actor AmpSession {
             }
             releaseSend()
         }
+    }
+
+    // Waits until the amp has reported `slot` and its dump has covered the copy, or `timeout` has passed. It starts
+    // right after the select went out, with no pause in between, so only the amp's answer to it counts.
+    private func dumpArrives(for slot: Int, within timeout: Duration) async -> Bool {
+        reportedChannel = nil
+        dumpWaitCount += 1
+        let id = dumpWaitCount
+        return await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            dumpWaiter = (id, slot, continuation)
+            Task { [clock] in
+                do {
+                    try await clock.sleep(for: timeout)
+                } catch {
+                    return  // cancelled: never happens
+                }
+                self.expireDumpWait(id)
+            }
+        }
+    }
+
+    private func resumeDumpWaiter() {
+        guard let dumpWaiter, reportedChannel == dumpWaiter.slot, uncovered.isEmpty else { return }
+        self.dumpWaiter = nil
+        dumpWaiter.continuation.resume(returning: true)
+    }
+
+    private func expireDumpWait(_ id: Int) {
+        guard let dumpWaiter, dumpWaiter.id == id else { return }
+        self.dumpWaiter = nil
+        dumpWaiter.continuation.resume(returning: false)
     }
 
     private func expireSave(_ id: Int, slot: Int) {

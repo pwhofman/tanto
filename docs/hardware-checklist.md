@@ -188,3 +188,29 @@ Afterwards, switch to another channel and back.
 | Restore: written, read back the same; scratch channel restored | Yes: the dialog listed the eight names; Tanto reported "Restored channels 1–8; they read back the same."; the amp's read-back matches the backup file byte for byte (passive listener); A1 is KATANA Mk2 again. |
 | Effect knobs on the amp: what the amp reports for each (log) | Done with Tanto connected and the passive listener instead of the probe. For A1's selected types, fully left to fully right: BOOSTER raises `PRM_ODDS_DRIVE` 1 → 70 and lowers `PRM_ODDS_EFFECT_LEVEL` 74 → 40; MOD (2x2 CHORUS) raises LOW RATE 21 → 80 and HIGH RATE 11 → 70; FX (TREMOLO) raises RATE 31 → 90; DELAY raises EFFECT LEVEL 2 → 100 and lowers FEEDBACK 34 → 22; REVERB raises EFFECT LEVEL 0 → 100. At −1 the effect's SW and LED go to 0. The amp also reports the knob position (`PRM_KNOB_POS_*`). Then A2 and back to A1 on the amp, each with its full dump. |
 | The dialogs' look: anything unclear or wrong | Fine, says the user. |
+
+## Check 4: fast channel switching
+
+A switch from Tanto takes the amp's channel number and dump as its read-back instead of reads that the amp leaves
+unanswered while it sends them; check 3's log showed the dump ending about 0.3 s after the channel number. Silent:
+nothing here needs sound.
+
+Before starting: POWER CONTROL at 0.5 W, MASTER at minimum, BOSS TONE STUDIO closed, Tanto quit, so that the new build
+can be installed with `scripts/build-app.sh --install`.
+
+1. Open Tanto and let it connect. Click another channel in the sidebar: within about half a second the knobs and the
+   name show the new channel, and "Edited" does not appear.
+2. Click through four channels quickly, then run through them with the arrow keys. Tanto ends on the last channel
+   chosen, and the amp's channel LEDs agree.
+3. Switch with a channel button on the amp: Tanto follows, as before.
+4. Read only, by Claude: Tanto's log since step 1 holds no "no dump of channel … after selecting it" and no "no reply,
+   retrying once".
+
+### Results
+
+| Item | Result |
+|---|---|
+| A switch shows the new channel within about half a second, without "Edited" | |
+| Quick clicks and arrow keys end on the last channel; the amp agrees | |
+| A channel button on the amp: Tanto follows | |
+| Log: no fallback reads, no retries | |

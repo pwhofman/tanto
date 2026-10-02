@@ -27,6 +27,33 @@ private func connectedSession() async throws -> (SimulatedAmp, AmpSession, Param
     #expect(await session.guardSnapshot(of: []).generation > before)
 }
 
+/// Whether any of `received` is a read (RQ1).
+private func containsRead(_ received: some Sequence<SimulatedAmp.Received>) -> Bool {
+    received.contains { $0.message.count > 7 && $0.message[7] == SysEx.rq1Command }
+}
+
+@Test func aSelectTakesTheAmpsChannelNumberAndDumpInsteadOfReading() async throws {
+    let (amp, session, _, volume) = try await connectedSession()
+    let start = amp.received.count
+    try await session.select(6)
+    // The amp leaves reads unanswered while it sends its dump (hardware check 3), which made a read wait 3 s.
+    #expect(!containsRead(amp.received.dropFirst(start)))
+    #expect(await session.currentChannel == 6)
+    #expect(await session.liveValue(of: volume) == 88)
+    #expect(await session.isLivePatchValid)
+}
+
+@Test func withoutTheAmpsDumpASelectReadsTheChannelBack() async throws {
+    let (amp, session, _, volume) = try await connectedSession()
+    amp.setSendsDumps(false)
+    let start = amp.received.count
+    try await session.select(6)
+    #expect(containsRead(amp.received.dropFirst(start)))
+    #expect(await session.currentChannel == 6)
+    #expect(await session.liveValue(of: volume) == 88)
+    #expect(await session.isLivePatchValid)
+}
+
 @Test func aSelectDropsWritesDecidedOnTheOldChannel() async throws {
     let (amp, session, map, _) = try await connectedSession()
     let bass = try #require(map.parameter(block: "Status", prm: "PRM_KNOB_POS_BASS"))
