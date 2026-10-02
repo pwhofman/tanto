@@ -1,7 +1,7 @@
 # Tanto
 
 A macOS editor and librarian for the BOSS Katana-100 MkII. Design: `docs/superpowers/specs/2026-10-01-tanto-design.md`.
-Plans: `docs/superpowers/plans/`. Hardware checks: `docs/hardware-checklist.md`.
+Hardware checks: `docs/hardware-checklist.md`.
 
 ## The amp must never get loud
 
