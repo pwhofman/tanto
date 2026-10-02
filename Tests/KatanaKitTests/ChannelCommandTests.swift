@@ -15,11 +15,12 @@ private func connectedSession() async throws -> (SimulatedAmp, AmpSession, Param
     return (amp, session, map, volume)
 }
 
-@Test func selectingAChannelSendsToneStudiosCommandAndReadsTheChannelBack() async throws {
+@Test func selectingAChannelWritesItsNumberAsToneStudioDoesAndReadsTheChannelBack() async throws {
     let (amp, session, _, volume) = try await connectedSession()
     let before = await session.guardSnapshot(of: []).generation
     try await session.select(6)
-    #expect(amp.received.contains { $0.message == SysEx.dt1(Address(packed: 0x7F00_0100), data: [0, 6], deviceID: 0) })
+    // Tone Studio's channel list writes PATCH NUM; the amp ignores 7F 00 01 00 for this (hardware check 3).
+    #expect(amp.received.contains { $0.message == SysEx.dt1(Address(packed: 0x0001_0000), data: [0, 6], deviceID: 0) })
     #expect(await session.currentChannel == 6)
     #expect(await session.liveValue(of: volume) == 88)
     #expect(await session.isLivePatchValid)

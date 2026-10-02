@@ -320,9 +320,9 @@ public actor AmpSession {
             reportedValue: reports.value, generation: generation, panics: panics)
     }
 
-    /// Selects a channel with Tone Studio's command, then reads the channel number and the live patch back, whether or
-    /// not the amp also sends its dump. Everything decided on the old channel is dropped before the command goes out:
-    /// the copy of the live patch is invalid until the new channel has been read.
+    /// Selects a channel by writing its number, as Tone Studio's channel list does, then reads the channel number and
+    /// the live patch back, whether or not the amp also sends its dump. Everything decided on the old channel is dropped
+    /// before the write goes out: the copy of the live patch is invalid until the new channel has been read.
     ///
     /// - Parameter slot: 0 = PANEL, 1–4 = A1–A4, 5–8 = B1–B4.
     /// - Throws: `WriteError.noSuchChannel`; `AmpError.timeout` if a read gets no reply; an error from the transport.
@@ -330,7 +330,7 @@ public actor AmpSession {
         guard (0...8).contains(slot) else { throw WriteError.noSuchChannel(slot) }
         generation += 1
         uncovered = Set(blockBytes.joined())
-        try await sendCommand(SysEx.dt1(.patchSelect, data: [0, UInt8(slot)], deviceID: deviceID))
+        try await sendCommand(SysEx.dt1(.currentPatchNumber, data: [0, UInt8(slot)], deviceID: deviceID))
         updatesContinuation.yield(.channel(try await readCurrentChannel()))
         for range in blockBytes {
             try await readIntoCopy(offset: range.lowerBound, size: range.count)

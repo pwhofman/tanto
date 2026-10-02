@@ -67,11 +67,11 @@ Sources in Tone Studio's `Contents/Resources/html/js/`: `config/product_setting.
 | Address       | Content                                                                    | v1                      |
 |---------------|----------------------------------------------------------------------------|-------------------------|
 | `00 00 00 00` | System: global EQ, line out, USB levels, cab EQ, power adjust              | not touched             |
-| `00 01 00 00` | Current patch number, `INTEGER2x7`, 0–8                                     | read                    |
+| `00 01 00 00` | Current patch number, `INTEGER2x7`, 0–8; writing it switches channels, as Tone Studio's channel list does | read and write |
 | `00 02 00 00` | MIDI settings                                                              | not touched             |
 | `10 0n 00 00` | Stored patch n, n = 0…8: 0 = PANEL, 1–4 = A1–A4, 5–8 = B1–B4                | read; write n = 1…8     |
 | `60 00 00 00` | Live (temporary) patch                                                     | read and write          |
-| `7F 00 01 00` | Patch select, DT1 `00 nn`                                                  | write                   |
+| `7F 00 01 00` | Tone Studio sends `00 nn` here after reordering channels in its librarian; it does not switch channels (hardware check 3) | not touched |
 | `7F 00 01 04` | Patch write (store the live patch in n), DT1 `00 nn`; the amp answers with a DT1 on the same address | write |
 
 PANEL is read and shown but never written, as in Tone Studio (`businesslogic/ktn/model_info.js`, `transferablePatch`).
@@ -150,9 +150,10 @@ Data flow:
    meanwhile. Messages from the amp never trigger a write, except the correction of 5.8, which only lowers a value
    that Tanto itself wrote.
 2. Every outgoing DT1 is one of: a parameter write that `SafetyGuard` produced from a user action; a whitelisted command
-   (`7F 00 00 01` editor mode, `7F 00 01 00` patch select, `7F 00 01 04` patch write); a press of the VARIATION or a
-   colour button (`7F 01 01 00` to `05`, 3.5), which `SafetyGuard` soft-switches (5.3); a librarian write after
-   confirmation: a save, or a rename or restore that writes stored channels 1–8 at `10 0n 00 00` directly.
+   (`7F 00 00 01` editor mode, `00 01 00 00` channel select, `7F 00 01 04` patch write); a press of the VARIATION or a
+   colour button (`7F 01 01 00` to `05`, 3.5), which `SafetyGuard` soft-switches (5.3), or of a TAP (`06`, `07`); a
+   librarian write after confirmation: a save, or a rename or restore that writes stored channels 1–8 at `10 0n 00 00`
+   directly.
 3. Validation before sending: the address belongs to `ParameterMap`, the value is within range, the encoding and the
    checksum are correct. Anything else is refused and logged. The UI has no way to send raw SysEx.
 4. At most one message per 20 ms. A drag or scroll of a knob or slider sends only its latest value, and after Panic it

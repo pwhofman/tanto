@@ -58,7 +58,8 @@ public struct Address: Hashable, Comparable, Sendable, CustomStringConvertible {
 }
 
 extension Address {
-    /// The selected channel, two bytes: 0 = PANEL, 1–4 = A1–A4, 5–8 = B1–B4.
+    /// The selected channel, two bytes: 0 = PANEL, 1–4 = A1–A4, 5–8 = B1–B4. Writing it switches channels, as Tone
+    /// Studio's channel list does.
     public static let currentPatchNumber = Address(packed: 0x0001_0000)
     /// The live (temporary) patch.
     public static let temporaryPatch = Address(packed: 0x6000_0000)
@@ -66,8 +67,6 @@ extension Address {
     public static let editorCommunicationLevel = Address(packed: 0x7F00_0000)
     /// Editor communication mode: 1 = on, 0 = off.
     public static let editorCommunicationMode = Address(packed: 0x7F00_0001)
-    /// Selects a channel: `00 nn`, as Tone Studio's channel menu sends.
-    public static let patchSelect = Address(packed: 0x7F00_0100)
     /// Saves the live patch to a channel: `00 nn`, as Tone Studio's WRITE sends; the amp confirms with a DT1 here.
     public static let patchWrite = Address(packed: 0x7F00_0104)
 

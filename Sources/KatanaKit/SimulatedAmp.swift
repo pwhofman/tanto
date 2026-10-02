@@ -123,9 +123,11 @@ public final class SimulatedAmp: MIDITransport {
                     reports = tap(button, at: now, &state)
                     return nil
                 }
-                if address == .patchSelect || address == .patchWrite, data.count == 2, (0...8).contains(Int(data[1])) {
+                if address == .currentPatchNumber || address == .patchWrite, data.count == 2,
+                    (0...8).contains(Int(data[1]))
+                {
                     let slot = Int(data[1])
-                    if address == .patchSelect {
+                    if address == .currentPatchNumber {
                         reports = load(slot, &state.memory)
                     } else {
                         copy(from: .temporaryPatch, to: .userPatch(slot), &state.memory)
