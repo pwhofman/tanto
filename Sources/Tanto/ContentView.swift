@@ -90,7 +90,7 @@ extension ContentView {
         let channel = EditorModel.channelLabel(pending.slot)
         switch pending.question {
         case .unsavedEdits:
-            return "Switching to \(channel) loads its stored sound, and the changes made in Tanto are lost."
+            return "Switching to \(channel) loads its stored sound, and the changes to the live sound are lost."
         case .valuesAboveCeiling(let values):
             let lines = values.map { value in
                 let ceiling = model.ceiling(of: value.parameter).map { value.parameter.displayText(for: $0) } ?? "?"

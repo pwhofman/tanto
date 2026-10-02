@@ -76,8 +76,8 @@ public final class EditorModel {
     public private(set) var ceilingPercent = 50
     /// How often Panic was pressed; a slider ignores the rest of a drag that a Panic interrupted.
     public private(set) var panicCount = 0
-    /// Whether the live patch has changes made in Tanto since a channel was last loaded or saved; switching asks before
-    /// it discards them (design spec, section 5.4).
+    /// Whether the live patch has changed since a channel was last loaded or saved, in Tanto or on the amp; switching
+    /// asks before it discards the changes (design spec, section 5.4).
     public private(set) var hasUnsavedEdits = false
     /// A switch to another channel that waits for the user's answer.
     public private(set) var pendingSwitch: PendingSwitch?

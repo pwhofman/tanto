@@ -15,7 +15,7 @@ struct TantoApp: App {
     @State private var model = EditorModel(map: loadParameterMap())
 
     var body: some Scene {
-        Window("Tanto", id: "main") {
+        Window("Tantō", id: "main") {
             ContentView(model: model)
                 .frame(minWidth: 760, minHeight: 520)
                 .task {

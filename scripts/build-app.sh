@@ -16,11 +16,15 @@ case "${1:-}" in
 esac
 
 branch=$(git rev-parse --abbrev-ref HEAD)
+# The app shows its name as Tantō, after the katana's companion blade; its file stays Tanto, which is easier to type
+# and to find.
 if [ "$branch" = main ]; then
     name=Tanto
+    shown=Tantō
     identifier=io.github.pwhofman.tanto
 else
     name="Tanto Dev"
+    shown="Tantō Dev"
     identifier=io.github.pwhofman.tanto.dev
     if $install; then
         echo "Only main installs; this is $branch" >&2
@@ -52,7 +56,7 @@ cat > "$app/Contents/Info.plist" << PLIST
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
-    <string>$name</string>
+    <string>$shown</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>

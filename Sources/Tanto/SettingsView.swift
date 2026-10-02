@@ -17,7 +17,7 @@ struct SettingsView: View {
                 Text("Ceiling: \(model.ceilingPercent) % of each guarded control's travel")
             }
             Text(
-                "Tanto never raises VOLUME, GAIN, levels and the other guarded controls above the ceiling, and raises them gradually up to it."
+                "Tantō never raises VOLUME, GAIN, levels and the other guarded controls above the ceiling, and raises them gradually up to it."
             )
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -37,7 +37,7 @@ struct SettingsView: View {
             }
             Button("Cancel", role: .cancel) { raiseTo = nil }
         } message: {
-            Text("A higher ceiling lets Tanto make the amp louder.")
+            Text("A higher ceiling lets Tantō make the amp louder.")
         }
     }
 
