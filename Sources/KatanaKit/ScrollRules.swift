@@ -1,8 +1,9 @@
 /// What scrolling does over Tanto's knobs and sliders (design spec, section 6). As in Tone Studio, a scroll over a
-/// control turns it instead of scrolling the page, and a mouse wheel turns it one step per notch; a trackpad turns it as
-/// far as a drag over the same distance. Three rules go further than Tone Studio's: the momentum after the fingers lift
-/// turns nothing, a trackpad scroll that began over the page stays with the page, and a scroll that begins within
-/// `pageHold` of the page's last one scrolls the page too.
+/// control turns it instead of scrolling the page, a mouse wheel turns it one step per notch, and a trackpad or a
+/// smooth-scrolling mouse one step per `minimumStepPoints` of scrolling; a change of direction starts the count again.
+/// A knob with few positions needs as many points per step as a drag. Three rules go further than Tone Studio's: the
+/// momentum after the fingers lift turns nothing, a trackpad scroll that began over the page stays with the page, and a
+/// scroll that begins within `pageHold` of the page's last one scrolls the page too.
 ///
 /// The app passes every scroll event with the control under the pointer and does what the outcome says.
 public struct ScrollRules<Control: Hashable> {
@@ -49,13 +50,20 @@ public struct ScrollRules<Control: Hashable> {
 
     /// How long after the page's last scroll event a scroll over a control still scrolls the page, in seconds.
     public static var pageHold: Double { 0.5 }
+    /// The fewest points of scrolling per step, as in Tone Studio. macOS speeds up scrolling, so a trackpad's points are
+    /// more than the fingers' travel, and a drag's distance per step turned knobs too fast (the user's test).
+    public static var minimumStepPoints: Double { 6 }
 
-    // A control that a trackpad scroll or a smooth-scrolling mouse turns: the points moved so far and the steps sent.
+    // A control that a trackpad scroll or a smooth-scrolling mouse turns, and the points towards its next step.
     private struct Turning {
         let control: Control
         let stepPoints: Double
         var points = 0.0
-        var steps = 0
+
+        init(control: Control, stepPoints: Double) {
+            self.control = control
+            self.stepPoints = max(stepPoints, ScrollRules.minimumStepPoints)
+        }
     }
 
     private var turning: Turning?
@@ -109,14 +117,15 @@ public struct ScrollRules<Control: Hashable> {
         return .scrollsPage
     }
 
-    // Rounded as a drag over the same distance is.
     private mutating func turn(_ start: Turning, by delta: Double) -> Outcome {
         var turning = start
+        if delta * turning.points < 0 {
+            turning.points = 0
+        }
         turning.points += delta
-        let steps = Int((turning.points / turning.stepPoints).rounded())
-        let change = steps - turning.steps
-        turning.steps = steps
+        let steps = Int(turning.points / turning.stepPoints)
+        turning.points -= Double(steps) * turning.stepPoints
         self.turning = turning
-        return .turns(turning.control, by: change)
+        return .turns(turning.control, by: steps)
     }
 }

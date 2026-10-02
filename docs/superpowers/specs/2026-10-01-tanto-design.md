@@ -315,8 +315,9 @@ as BOSS TONE STUDIO arranges its editor and built from macOS's own controls.
   its current value and shows "max …" below it; a refusal of `SafetyGuard` shows below the control.
 - Knobs and sliders turn by dragging them up or down, or by scrolling over them, which then does not scroll the page,
   as in Tone Studio. A knob that a drag gave the keyboard focus also turns with the arrow keys: up and right turn it up,
-  Shift takes ten steps. A mouse wheel turns one step per notch, as in Tone Studio; a trackpad turns as far as a drag over
-  the same distance. Up turns up: the direction the fingers or the wheel move, whatever the natural-scrolling setting.
+  Shift takes ten steps. A mouse wheel turns one step per notch, and a trackpad or a smooth-scrolling mouse one step per 6
+  points of scrolling, as in Tone Studio; a knob with few positions needs as many points per step as a drag, and a
+  change of direction starts the count again. Up turns up: the direction the fingers or the wheel move, whatever the natural-scrolling setting.
   Three rules go further than Tone Studio: the momentum after the fingers lift turns nothing; a scroll that began over
   the page, or begins within 0.5 s of the page's last scroll, scrolls the page; AMP TYPE and CONTOUR send their choice
   once the drag ends or the wheel has rested for 0.3 s, so one soft switch follows instead of one per step.
