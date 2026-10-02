@@ -86,3 +86,57 @@ import Testing
     try choose(2)
     #expect(amp.memory(at: .temporaryPatch.advanced(by: led.offset), count: 1) == [3])
 }
+
+// An effect knob does what hardware check 3 logged on the amp: above −1 the effect is on and its LED shows the selected
+// colour, and the knob sets some of the effect's parameters itself.
+@Test func effectKnobsSwitchTheEffectAndSetWhatTheAmpSets() async throws {
+    let map = try ParameterMap.bundled()
+    let amp = SimulatedAmp(map: map)
+    func parameter(_ block: String, _ prm: String) throws -> Parameter {
+        try #require(map.parameter(block: block, prm: prm))
+    }
+    func value(_ parameter: Parameter) -> Int {
+        let bytes = amp.memory(at: .temporaryPatch.advanced(by: parameter.offset), count: parameter.encoding.byteCount)
+        return parameter.value(fromRaw: parameter.encoding.decode(bytes))
+    }
+    func set(_ parameter: Parameter, to value: Int) throws {
+        try amp.send(
+            SysEx.dt1(
+                .temporaryPatch.advanced(by: parameter.offset),
+                data: parameter.encoding.encode(value + parameter.rawOffset), deviceID: amp.deviceID))
+    }
+    let delayKnob = try parameter("Status", "PRM_KNOB_POS_DELAY")
+    let delayOn = try parameter("Delay(1)", "PRM_DLY_SW")
+    let delayLED = try parameter("Status", "PRM_LED_STATE_DELAY")
+    let delayLevel = try parameter("Delay(1)", "PRM_DLY_COMMON_EFFECT_LEVEL")
+    let delayFeedback = try parameter("Delay(1)", "PRM_DLY_COMMON_FEEDBACK")
+    try set(try parameter("Patch_2", "PRM_FXBOX_SEL_DELAY"), to: 1)
+    try set(delayKnob, to: 50)
+    #expect(value(delayOn) == 1 && value(delayLED) == 2)
+    #expect(value(delayLevel) == 70 && value(delayFeedback) == 29)
+    try set(delayKnob, to: -1)
+    #expect(value(delayOn) == 0 && value(delayLED) == 0)
+
+    let drive = try parameter("Patch_0", "PRM_ODDS_DRIVE")
+    let boosterLevel = try parameter("Patch_0", "PRM_ODDS_EFFECT_LEVEL")
+    let reverbLevel = try parameter("Patch_1", "PRM_REVERB_EFFECT_LEVEL")
+    try set(try parameter("Status", "PRM_KNOB_POS_BOOST"), to: 50)
+    try set(try parameter("Status", "PRM_KNOB_POS_REVERB"), to: 50)
+    #expect(value(drive) == 36 && value(boosterLevel) == 57 && value(reverbLevel) == 66)
+
+    // MOD and FX set the rate of a chorus or a tremolo, measured with one each; other types keep their values.
+    let modKnob = try parameter("Status", "PRM_KNOB_POS_MOD")
+    let modType = try parameter("Fx(1)", "PRM_FX1_FXTYPE")
+    let lowRate = try parameter("Fx(1)", "PRM_FX1_2x2CHORUS_LOW_RATE")
+    let highRate = try parameter("Fx(1)", "PRM_FX1_2x2CHORUS_HIGH_RATE")
+    let tremoloRate = try parameter("Fx(2)", "PRM_FX1_TREMOLO_RATE")
+    try set(modType, to: 29)
+    try set(modKnob, to: 70)
+    #expect(value(lowRate) == 62 && value(highRate) == 52)
+    try set(try parameter("Fx(2)", "PRM_FX1_FXTYPE"), to: 21)
+    try set(try parameter("Status", "PRM_KNOB_POS_FX"), to: 70)
+    #expect(value(tremoloRate) == 64)
+    try set(modType, to: 0)
+    try set(modKnob, to: 10)
+    #expect(value(lowRate) == 62)
+}

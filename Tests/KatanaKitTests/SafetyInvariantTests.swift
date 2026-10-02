@@ -87,7 +87,9 @@ func randomRequestsKeepTheSafetyRules(seed: UInt64) async throws {
         let parameter = try #require(map.parameter(atOffset: offset), "write to unknown address \(address)")
         #expect(parameter.written, "write to \(parameter.prm), which Tone Studio does not write")
         let new = parameter.value(fromRaw: parameter.encoding.decode(data))
-        let old = value(at: parameter)
+        // The amp sets some values itself, e.g. an effect's level from its knob: the rules hold from what it held.
+        let old =
+            message.previous.map { parameter.value(fromRaw: parameter.encoding.decode($0)) } ?? value(at: parameter)
         if let louder = parameter.louder, parameter.kind == .numeric, louder == .up ? new > old : new < old {
             rampSteps += 1
             #expect(abs(new - old) == 1, "\(parameter.prm) jumped from \(old) to \(new)")
