@@ -264,6 +264,15 @@ public actor SafetyGuard {
         startPump()
     }
 
+    /// Taps a TAP button. A tap changes only DELAY's or DELAY2's time, never the level, so it needs no soft switch.
+    ///
+    /// - Parameter button: The TAP button.
+    /// - Throws: `SafetyError.notReady` once stopped; an error from the transport.
+    public func tap(_ button: TapButton) async throws {
+        guard !stopped else { throw SafetyError.notReady }
+        try await session.tap(button)
+    }
+
     /// Renames the live patch; the sound does not change.
     ///
     /// - Parameter name: At most 16 characters from space to `}`.

@@ -84,8 +84,10 @@ _FORMATS = {
     "value+'%'": "percent",
 }
 _PICKER_CLASSES = frozenset({"select-box", "toggle-button", "radio-button", "check-box"})
-# Controls that only display a value, or duplicate another control; they do not make a parameter written.
-_DISPLAY_ONLY = re.compile(r"-(watcher|dummy)$")
+# Controls that only display a value, or duplicate another control; they do not make a parameter written. The colour
+# selections' watchers are written: clicking a colour's LED on the EFFECTS page writes them (`panelEffectsSelInfo` in
+# js/businesslogic/bts/effect_controller.js).
+_DISPLAY_ONLY = re.compile(r"-dummy$")
 # Panel buttons that send a button press, a DT1 of 00 to 7F 01 01 0n, instead of writing the parameter they show, which
 # for the VARIATION and colour buttons is their LED (`panelActionBtnInfo` in js/businesslogic/bts/effect_controller.js).
 COMMAND_BUTTONS = frozenset(

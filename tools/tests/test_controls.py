@@ -179,7 +179,13 @@ def test_real_controls() -> None:
     assert set(re.findall(r"'([\w-]+)':\s*\{\s*addr:\s*0x7F0101", controller)) == COMMAND_BUTTONS
     for led in ("VARI", "BOOST", "MOD", "FX", "DELAY", "REVERB"):
         assert not by_key[("Status", f"PRM_LED_STATE_{led}")]["written"], led
-    assert sum(1 for p in parameters if p["written"]) == 616
+    assert sum(1 for p in parameters if p["written"]) == 621
+    # Clicking a colour's LED on the EFFECTS page selects that colour: Tone Studio writes the effect's selection through
+    # its select watcher. A selection is a picker, so it goes through the soft switch.
+    for effect in ("BOOST", "MOD", "FX", "DELAY", "REVERB"):
+        selection = by_key[("Patch_2", f"PRM_FXBOX_SEL_{effect}")]
+        assert (selection["written"], selection["kind"], selection["guarded"]) == (True, "picker", False), effect
+    assert not by_key[("Patch_1", "PRM_CONTOUR_SELECT")]["page"]
 
     # How Tone Studio shows a control and where: on its page, measured from the page's top left, and on the front panel.
     drive = by_key[("Patch_0", "PRM_ODDS_DRIVE")]

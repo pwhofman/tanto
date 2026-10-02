@@ -69,3 +69,20 @@ import Testing
     try amp.send(SysEx.dt1(PanelButton.variation.address, data: [0], deviceID: amp.deviceID))
     #expect(amp.memory(at: variationAddress, count: 1) == [1])
 }
+
+@Test func choosingAColourLightsItWhenTheEffectIsOn() throws {
+    let map = try ParameterMap.bundled()
+    let amp = SimulatedAmp(map: map)
+    let led = try #require(map.parameter(block: "Status", prm: PanelButton.booster.led))
+    let selection = try #require(map.parameter(block: "Patch_2", prm: "PRM_FXBOX_SEL_BOOST"))
+    let choose = { (colour: UInt8) in
+        try amp.send(SysEx.dt1(.temporaryPatch.advanced(by: selection.offset), data: [colour], deviceID: 0))
+    }
+    // Off: the LED stays dark, as on the amp when the effect is off.
+    try choose(2)
+    #expect(amp.memory(at: .temporaryPatch.advanced(by: led.offset), count: 1) == [0])
+    // On, GREEN: choosing YELLOW lights YELLOW.
+    amp.setMemory([1], at: .temporaryPatch.advanced(by: led.offset))
+    try choose(2)
+    #expect(amp.memory(at: .temporaryPatch.advanced(by: led.offset), count: 1) == [3])
+}

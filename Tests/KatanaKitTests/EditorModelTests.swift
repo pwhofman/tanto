@@ -100,7 +100,10 @@ private func connectedModel() async throws -> (EditorModel, SimulatedAmp) {
     let pages = Dictionary(uniqueKeysWithValues: model.pages.joined().map { ($0.title, $0.parameters) })
     // EFFECTS holds every effect's GREEN, RED and YELLOW assignment; CHAIN the order of the blocks.
     let effects = try #require(pages["EFFECTS"])
-    #expect(effects.count == 21 && effects.allSatisfy { $0.control == .menu && $0.page?.hasPrefix("effects-") == true })
+    #expect(effects.allSatisfy { $0.page?.hasPrefix("effects-") == true })
+    // Per effect the three colour assignments, and the selected colour that its LEDs choose.
+    #expect(effects.count { $0.control == .menu } == 21)
+    #expect(effects.filter { $0.control != .menu }.map(\.prm).allSatisfy { $0.hasPrefix("PRM_FXBOX_SEL_") })
     #expect(try #require(pages["CHAIN"]).map(\.prm) == ["PRM_CHAIN_PTN"])
     // A page holds its block's controls; the front panel and the EFFECTS page show the others.
     let booster = try #require(pages["BOOSTER"]).map(\.prm)
@@ -261,4 +264,47 @@ private func writes(to parameter: Parameter, in amp: SimulatedAmp) -> [Int] {
     await model.settle()
     #expect(writes(to: onOff, in: amp).isEmpty && writes(to: select, in: amp).isEmpty)
     #expect(model.contour == 0)
+}
+
+@MainActor
+@Test func choosingAColourDipsTheVolumeAroundTheSelection() async throws {
+    let (model, amp) = try await connectedModel()
+    let selection = try #require(model.map.parameter(block: "Patch_2", prm: "PRM_FXBOX_SEL_BOOST"))
+    let volume = try #require(model.map.parameter(block: "Status", prm: "PRM_KNOB_POS_VOLUME"))
+    await model.set(selection, to: 2)
+    await model.settle()
+    #expect(model.refusals[selection.offset] == nil)
+    #expect(writes(to: selection, in: amp) == [2])
+    // As for a colour button: VOLUME to 0 before the selection, back to 30 after it.
+    let messages = amp.received.map(\.message)
+    let volumeAt = { (value: UInt8) in
+        SysEx.dt1(.temporaryPatch.advanced(by: volume.offset), data: [value], deviceID: 0)
+    }
+    let dip = try #require(messages.firstIndex(of: volumeAt(0)))
+    let chosen = try #require(
+        messages.firstIndex(of: SysEx.dt1(.temporaryPatch.advanced(by: selection.offset), data: [2], deviceID: 0)))
+    let restored = try #require(messages.lastIndex(of: volumeAt(30)))
+    #expect(dip < chosen && chosen < restored)
+}
+
+@MainActor
+@Test func twoTapsSetTheDelayTimeWithoutTouchingTheVolume() async throws {
+    let (model, amp) = try await connectedModel()
+    let time = try #require(model.map.parameter(block: "Delay(1)", prm: "PRM_DLY_COMMON_DLY_TIME"))
+    let volume = try #require(model.map.parameter(block: "Status", prm: "PRM_KNOB_POS_VOLUME"))
+    let volumeWrites = writes(to: volume, in: amp).count
+    await model.tap(.delay)
+    try await Task.sleep(for: .milliseconds(300))
+    await model.tap(.delay)
+    #expect(model.tapRefusals[.delay] == nil)
+    #expect(try await eventually { model.value(of: time).map { abs($0 - 300) < 60 } == true })
+    #expect(amp.received.count { $0.message == SysEx.dt1(TapButton.delay.address, data: [0], deviceID: 0) } == 2)
+    #expect(writes(to: volume, in: amp).count == volumeWrites)
+}
+
+@MainActor
+@Test func tappingWithoutTheAmpIsRefused() async throws {
+    let model = EditorModel(map: try ParameterMap.bundled())
+    await model.tap(.delay2)
+    #expect(model.tapRefusals[.delay2] == "Not connected")
 }

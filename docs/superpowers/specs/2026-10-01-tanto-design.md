@@ -103,9 +103,11 @@ and the BOOSTER, MOD, FX, DELAY and REVERB knobs, where −1 means the effect is
 from these, as when the real knobs are turned. The VARIATION and colour buttons are pressed instead: a DT1 of `00` to
 `7F 01 01 00` (VARIATION) or `7F 01 01 01` to `05` (BOOSTER to REVERB) does what pressing the real button does. Their
 LEDs in the Status block, where 0 means off and 1–3 are the colours, only show the result; writing them changes nothing
-(hardware check 2b). VOLUME, BASS, MIDDLE, TREBLE and PRESENCE map one to one; GAIN goes through the amp's own
-curve (knob 34 gave gain 47 in hardware check 1). After a channel is loaded the Status block holds the saved positions
-(B2: VOLUME 88), and turning a real knob overwrites them.
+(hardware check 2b). Tone Studio's EFFECTS page also selects a colour directly, by writing the effect's colour
+selection (`PRM_FXBOX_SEL_BOOST` to `PRM_FXBOX_SEL_REVERB`), and presses DELAY's and DELAY2's TAP with `00` to
+`7F 01 01 06` and `07`; Tanto does both (hardware check 3). VOLUME, BASS, MIDDLE, TREBLE and PRESENCE map one to one;
+GAIN goes through the amp's own curve (knob 34 gave gain 47 in hardware check 1). After a channel is loaded the Status
+block holds the saved positions (B2: VOLUME 88), and turning a real knob overwrites them.
 
 Tone Studio never writes the amp parameters themselves (`PRM_PREAMP_A_*`) or FOOT VOLUME. Tanto reads them but does not
 write them. The effects' detail pages write the effect parameters directly. About 50 entries in `address_map.js` have no
@@ -189,8 +191,8 @@ stays unguarded: lowering it fills in the dips of the tremolo without raising it
 ### 5.3 Switches and pickers
 
 Switches and pickers in the sound path (block on/off, the AMP TYPE knob, the VARIATION and colour buttons, effect types,
-colour assignments, chain, block positions, contour, cabinet resonance), and effect knobs moved across −1, use a soft
-switch:
+colour assignments and selections, chain, block positions, contour, cabinet resonance), and effect knobs moved across
+−1, use a soft switch:
 
 1. If the VOLUME knob is above the ceiling, the change is refused with the message "Lower VOLUME below the ceiling
    first".
@@ -198,7 +200,7 @@ switch:
 3. The change is sent.
 4. The VOLUME knob ramps back to its previous value under the rules of 5.2.
 
-Patch-name edits are not soft-switched.
+Patch-name edits and TAP, which changes only the delay time, are not soft-switched.
 
 ### 5.4 Channels and memory
 
@@ -283,14 +285,17 @@ as BOSS TONE STUDIO arranges its editor and built from macOS's own controls.
     EFFECTS (the BOOSTER, MOD, FX, DELAY and REVERB knobs, each with its colour button above it), then CAB RESONANCE
     with PRESENCE, SOLO with its level, and CONTOUR. Buttons, switches and menus sit above the knobs; the groups wrap
     in a narrow window.
-  - The pages, chosen with tabs in Tone Studio's groups: EFFECTS and CHAIN; BOOSTER, MOD, FX, DELAY, DELAY2, REVERB,
-    SOLO and CONTOUR; PEDAL FX, EQ, EQ2, NS and SEND/RETURN. ASSIGN (controller assignments) comes later (section 11).
-    Tanto opens on EFFECTS, as Tone Studio does.
+  - The pages, chosen with tabs in Tone Studio's groups, in one row: EFFECTS and CHAIN; BOOSTER, MOD, FX, DELAY,
+    DELAY2, REVERB, SOLO and CONTOUR; PEDAL FX, EQ, EQ2, NS and SEND/RETURN. ASSIGN (controller assignments) comes
+    later (section 11). Tanto opens on EFFECTS, as Tone Studio does.
   - A block's page has its on/off switch, titled with the page's name, and its type menus in a header row, then its
     controls in Tone Studio's rows, each at Tone Studio's horizontal position while the row fits the window. Controls
     of the types not selected are hidden. The CONTOUR page starts with the panel's CONTOUR knob.
-  - EFFECTS shows, per effect, the variations that its GREEN, RED and YELLOW buttons select, as menus; markers show the
-    colour the button has selected. CHAIN shows the seven chains with their order of blocks.
+  - EFFECTS shows, per effect, the variations that its GREEN, RED and YELLOW buttons select, as menus. Its coloured
+    markers show the colour the button has selected, and clicking one selects that colour, through the soft switch,
+    as Tone Studio does. A TAP button under DELAY's and DELAY2's variations presses the amp's TAP (3.5), which sets
+    the delay time from the interval between taps; the time shows under it. CHAIN shows the seven chains with their
+    order of blocks.
   - The VARIATION and colour buttons are pressed as on the amp (3.5) and show the state the amp reports: OFF or ON,
     and OFF, GREEN, RED or YELLOW. The amp reports the result of every panel change, so the display shows what the amp
     actually did.

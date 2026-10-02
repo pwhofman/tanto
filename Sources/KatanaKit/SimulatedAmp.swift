@@ -32,6 +32,8 @@ public final class SimulatedAmp: MIDITransport {
     private let ampVolumeOffset: Int?
     // Per panel button: the offset of its LED, and for a colour button the offset of its colour selection.
     private let buttonOffsets: [PanelButton: (led: Int, selection: Int?)]
+    // Per TAP button: the DELAY TIME it sets.
+    private let tapTimes: [TapButton: Parameter]
 
     private struct State {
         var memory: [Int: UInt8]
@@ -40,6 +42,7 @@ public final class SimulatedAmp: MIDITransport {
         var confirmsSaves = true
         let identityReply: [UInt8]
         var crossingKnobTurn: (address: Address, value: [UInt8])?
+        var lastTap: [TapButton: ContinuousClock.Instant] = [:]
     }
 
     /// Creates a simulated amp whose nine stored patches and live patch hold the table's initial values.
@@ -66,6 +69,10 @@ public final class SimulatedAmp: MIDITransport {
             }
         }
         self.buttonOffsets = buttonOffsets
+        tapTimes = Dictionary(
+            uniqueKeysWithValues: TapButton.allCases.compactMap { button in
+                map.parameter(block: button.block, prm: "PRM_DLY_COMMON_DLY_TIME").map { (button, $0) }
+            })
         (incoming, continuation) = AsyncStream.makeStream(of: [UInt8].self)
         var memory: [Int: UInt8] = [:]
         let patches =
@@ -112,6 +119,10 @@ public final class SimulatedAmp: MIDITransport {
                     reports = press(button, &state.memory)
                     return nil
                 }
+                if let button = TapButton.allCases.first(where: { $0.address == address }) {
+                    reports = tap(button, at: now, &state)
+                    return nil
+                }
                 if address == .patchSelect || address == .patchWrite, data.count == 2, (0...8).contains(Int(data[1])) {
                     let slot = Int(data[1])
                     if address == .patchSelect {
@@ -127,10 +138,19 @@ public final class SimulatedAmp: MIDITransport {
                 for (index, byte) in data.enumerated() {
                     state.memory[address.linear + index] = byte
                 }
+                // A colour chosen on Tone Studio's EFFECTS page lights up as its button would, if the effect is on.
+                for offsets in buttonOffsets.values {
+                    guard let selection = offsets.selection, address == .temporaryPatch.advanced(by: selection),
+                        let colour = data.first, (state.memory[Address.temporaryPatch.linear + offsets.led] ?? 0) > 0
+                    else { continue }
+                    state.memory[Address.temporaryPatch.linear + offsets.led] = colour + 1
+                    reports.append(
+                        SysEx.dt1(.temporaryPatch.advanced(by: offsets.led), data: [colour + 1], deviceID: deviceID))
+                }
                 if let turn = state.crossingKnobTurn, turn.address == address {
                     // The knob turn happened first on the amp, so Tanto's write wins there; its report arrives late.
                     state.crossingKnobTurn = nil
-                    reports = [SysEx.dt1(address, data: turn.value, deviceID: deviceID)]
+                    reports.append(SysEx.dt1(address, data: turn.value, deviceID: deviceID))
                 }
                 if let volumeKnobOffset, let ampVolumeOffset,
                     address == Address.temporaryPatch.advanced(by: volumeKnobOffset), let volume = data.first
@@ -146,6 +166,20 @@ public final class SimulatedAmp: MIDITransport {
         for report in reports {
             continuation.yield(report)
         }
+    }
+
+    // Sets DELAY TIME to the interval since the previous tap, as the amp's TAP does; a first tap only starts the count.
+    private func tap(_ button: TapButton, at time: ContinuousClock.Instant, _ state: inout State) -> [[UInt8]] {
+        defer { state.lastTap[button] = time }
+        guard let previous = state.lastTap[button], let parameter = tapTimes[button] else { return [] }
+        let milliseconds = Int(((time - previous) / .milliseconds(1)).rounded())
+        guard (parameter.minimum...parameter.maximum).contains(milliseconds) else { return [] }
+        let address = Address.temporaryPatch.advanced(by: parameter.offset)
+        let bytes = parameter.encoding.encode(milliseconds + parameter.rawOffset)
+        for (index, byte) in bytes.enumerated() {
+            state.memory[address.linear + index] = byte
+        }
+        return [SysEx.dt1(address, data: bytes, deviceID: deviceID)]
     }
 
     // Does what the amp's own button does and returns the reports of what changed.

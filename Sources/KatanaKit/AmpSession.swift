@@ -452,6 +452,16 @@ public actor AmpSession {
             SysEx.dt1(button.address, data: [0], deviceID: deviceID), priority: priority, basis: basis)
     }
 
+    /// Taps a TAP button: the amp sets the delay time from the interval between taps.
+    ///
+    /// - Parameter button: The TAP button.
+    /// - Returns: `false` if the tap was dropped.
+    /// - Throws: An error from the transport.
+    @discardableResult
+    func tap(_ button: TapButton) async throws -> Bool {
+        try await sendCommand(SysEx.dt1(button.address, data: [0], deviceID: deviceID))
+    }
+
     /// Panic: the VOLUME knob to 0 as the next message, ahead of everything queued and of a read that waits for its
     /// reply. No write decided before is sent afterwards. While connecting, VOLUME 0 goes out as soon as editor mode is
     /// on (design spec, section 5.5).

@@ -70,6 +70,8 @@ public final class EditorModel {
     public private(set) var nameRefusal: String?
     /// The latest refusal of `SafetyGuard` per panel button, as a message for the button.
     public private(set) var buttonRefusals: [PanelButton: String] = [:]
+    /// The latest refusal of a TAP button, as a message for the button.
+    public private(set) var tapRefusals: [TapButton: String] = [:]
     /// The ceiling as a percentage of a guarded parameter's travel.
     public private(set) var ceilingPercent = 50
     /// How often Panic was pressed; a slider ignores the rest of a drag that a Panic interrupted.
@@ -443,6 +445,22 @@ public final class EditorModel {
             } catch {
                 logger.error("Panic not sent: \(error)")
             }
+        }
+    }
+
+    /// Taps a TAP button through `SafetyGuard`; a refusal is kept as the button's message.
+    ///
+    /// - Parameter button: The TAP button.
+    public func tap(_ button: TapButton) async {
+        guard let safety else {
+            tapRefusals[button] = "Not connected"
+            return
+        }
+        do {
+            try await safety.tap(button)
+            tapRefusals[button] = nil
+        } catch {
+            tapRefusals[button] = Self.message(for: error)
         }
     }
 

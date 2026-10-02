@@ -144,7 +144,7 @@ Afterwards, turn MASTER to minimum, then switch to another channel and back.
 ## Check 3: librarian
 
 Before starting: POWER CONTROL at 0.5 W, MASTER at minimum, BOSS TONE STUDIO closed, `build/Tanto.app` built with
-`scripts/build-app.sh`. Pick a scratch channel whose sound may be overwritten until the restore in step 6.
+`scripts/build-app.sh`. Pick a scratch channel whose sound may be overwritten until the restore in step 9.
 
 1. File › Back Up Channels…, and save the file. Tanto reads the file back and reports that it reads back the same.
    Nothing is written to the amp before this step has succeeded.
@@ -154,8 +154,17 @@ Before starting: POWER CONTROL at 0.5 W, MASTER at minimum, BOSS TONE STUDIO clo
 4. Change something small in Tanto, e.g. BASS. Then choose "Save Live Sound Here…" in the scratch channel's context
    menu: the amp confirms, and Tanto selects the scratch channel.
 5. Rename the scratch channel from its context menu. The sidebar shows the new name.
-6. File › Restore Channels…, with the file of step 1. Tanto writes A1 to B4, reads them back and reports no
+6. Look through the front panel and every page, and say what to change (plan 4, task 7).
+7. EFFECTS page, an effect that is on: click another colour's marker. VOLUME dips, the amp changes to that colour,
+   and the panel's LED and the marker follow. Tanto's first write of a colour selection (`PRM_FXBOX_SEL_*`).
+8. EFFECTS page: tap DELAY's TAP twice, about half a second apart. The time under it follows the interval; the
+   VOLUME does not move. Tanto's first TAP.
+9. File › Restore Channels…, with the file of step 1. Tanto writes A1 to B4, reads them back and reports no
    difference. The scratch channel has its own name and sound again.
+10. Read only, for the sounding simulator. Quit Tanto, then run
+    `swift run TantoProbe --connect --listen 120 --log scratch/knobs.log`. While it listens, turn each effect knob on
+    the amp (BOOSTER, MOD, FX, DELAY, REVERB) slowly from minimum to maximum, one at a time. The log shows which
+    parameters each knob moves, so that the simulator's knobs can do the same.
 
 Afterwards, switch to another channel and back.
 
@@ -170,5 +179,9 @@ Afterwards, switch to another channel and back.
 | A save made on the amp: Tanto reads the name again | |
 | Save Live Sound Here…: confirmed, channel selected | |
 | Rename: new name in the sidebar | |
+| The window: remarks on the panel and the pages | |
+| Colour marker: VOLUME dips, the amp changes colour, LED and marker follow | |
+| TAP: the time follows the taps, VOLUME stays | |
 | Restore: written, read back the same; scratch channel restored | |
+| Effect knobs on the amp: what the amp reports for each (log) | |
 | The dialogs' look: anything unclear or wrong | |

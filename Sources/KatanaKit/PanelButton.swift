@@ -34,3 +34,23 @@ public enum PanelButton: Int, CaseIterable, Sendable {
         ["VARIATION", "BOOSTER COLOR", "MOD COLOR", "FX COLOR", "DELAY COLOR", "REVERB COLOR"][rawValue]
     }
 }
+
+/// A TAP button of Tone Studio's EFFECTS page: tapping it twice or more sets DELAY's or DELAY2's time to the interval
+/// between the taps. A tap is a DT1 of `00` to `7F 01 01 06` (DELAY) or `07` (DELAY2), as Tone Studio sends it
+/// (`panelActionBtnInfo` in js/businesslogic/bts/effect_controller.js).
+public enum TapButton: Int, CaseIterable, Sendable {
+    /// DELAY's TAP.
+    case delay = 6
+    /// DELAY2's TAP.
+    case delay2 = 7
+
+    /// Where a tap goes.
+    public var address: Address {
+        Address(packed: 0x7F01_0100 | UInt32(rawValue))
+    }
+
+    /// The block whose DELAY TIME the taps set.
+    public var block: String {
+        self == .delay ? "Delay(1)" : "Delay(2)"
+    }
+}

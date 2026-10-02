@@ -7,7 +7,7 @@ import Testing
     let map = try ParameterMap.bundled()
     #expect(map.table.blocks.count == 31)
     #expect(map.table.parameters.count == 1465)
-    #expect(map.table.parameters.filter(\.written).count == 616)
+    #expect(map.table.parameters.filter(\.written).count == 621)
     #expect(map.patchSize == 1986)
 }
 

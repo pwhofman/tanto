@@ -1,3 +1,4 @@
+import AppKit
 import KatanaKit
 import SwiftUI
 
@@ -13,18 +14,10 @@ struct Pages: View {
                 ForEach(model.pages.indices, id: \.self) { index in
                     let group = model.pages[index]
                     // One tab is chosen across the groups; the other groups show none.
-                    Picker(
-                        "Page",
-                        selection: Binding<String?>(
-                            get: { group.contains { $0.id == selection } ? selection : nil },
-                            set: { if let new = $0 { selection = new } })
-                    ) {
-                        ForEach(group) { page in
-                            Text(page.title).tag(Optional(page.id))
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
+                    TabGroup(
+                        titles: group.map(\.title), selected: group.firstIndex { $0.id == selection },
+                        choose: { selection = group[$0].id }
+                    )
                     .fixedSize()
                 }
             }
@@ -39,18 +32,61 @@ struct Pages: View {
     }
 }
 
+/// A group of tabs as AppKit's segmented control, whose segments fit their titles as Tone Studio's tabs do, so that the
+/// three groups fit in one row; SwiftUI's segmented picker makes every segment as wide as the widest.
+private struct TabGroup: NSViewRepresentable {
+    let titles: [String]
+    /// The chosen tab, or `nil` if the chosen page is in another group.
+    let selected: Int?
+    let choose: (Int) -> Void
+
+    func makeNSView(context: Context) -> NSSegmentedControl {
+        let control = NSSegmentedControl(
+            labels: titles, trackingMode: .selectOne, target: context.coordinator,
+            action: #selector(Coordinator.changed(_:)))
+        control.segmentDistribution = .fit
+        control.setAccessibilityLabel("Page")
+        return control
+    }
+
+    func updateNSView(_ control: NSSegmentedControl, context: Context) {
+        context.coordinator.choose = choose
+        control.selectedSegment = selected ?? -1
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(choose: choose)
+    }
+
+    @MainActor
+    final class Coordinator: NSObject {
+        var choose: (Int) -> Void
+
+        init(choose: @escaping (Int) -> Void) {
+            self.choose = choose
+        }
+
+        @objc func changed(_ control: NSSegmentedControl) {
+            if control.selectedSegment >= 0 {
+                choose(control.selectedSegment)
+            }
+        }
+    }
+}
+
 /// Tone Studio's EFFECTS page: for each effect, the variations that its GREEN, RED and YELLOW buttons select.
 private struct EffectsPage: View {
     let model: EditorModel
     let page: EditorModel.Page
 
-    // Tone Studio's columns, each with the parameter that holds the colour its effect's button has selected.
-    private static let columns = [
-        (page: "effects-booster", title: "BOOSTER", selection: "PRM_FXBOX_SEL_BOOST"),
-        (page: "effects-mod", title: "MOD", selection: "PRM_FXBOX_SEL_MOD"),
-        (page: "effects-fx", title: "FX", selection: "PRM_FXBOX_SEL_FX"),
-        (page: "effects-delay", title: "DELAY", selection: "PRM_FXBOX_SEL_DELAY"),
-        (page: "effects-reverb", title: "REVERB", selection: "PRM_FXBOX_SEL_REVERB"),
+    // Tone Studio's columns: each effect's selected colour, and DELAY's and DELAY2's TAP under the column of their
+    // assignments.
+    private static let columns: [(page: String, title: String, selection: String, tap: (TapButton, left: Int)?)] = [
+        ("effects-booster", "BOOSTER", "PRM_FXBOX_SEL_BOOST", nil),
+        ("effects-mod", "MOD", "PRM_FXBOX_SEL_MOD", nil),
+        ("effects-fx", "FX", "PRM_FXBOX_SEL_FX", nil),
+        ("effects-delay", "DELAY", "PRM_FXBOX_SEL_DELAY", (.delay, 20)),
+        ("effects-reverb", "REVERB", "PRM_FXBOX_SEL_REVERB", (.delay2, 118)),
     ]
 
     var body: some View {
@@ -59,27 +95,36 @@ private struct EffectsPage: View {
                 EffectColumn(
                     model: model, title: column.title,
                     selection: model.map.parameter(block: "Patch_2", prm: column.selection),
-                    parameters: page.parameters.filter { $0.page == column.page })
+                    menus: page.parameters.filter { $0.page == column.page && $0.control == .menu },
+                    tap: column.tap.flatMap { button, left in
+                        model.map.parameter(block: button.block, prm: "PRM_DLY_COMMON_DLY_TIME").map {
+                            (button, left, $0)
+                        }
+                    })
             }
         }
     }
 }
 
 /// One effect's column of the EFFECTS page: a row per colour with a menu per variation. The coloured markers show the
-/// colour that the effect's button has selected; the button on the front panel changes it.
+/// colour that the effect's button has selected, and choose another, as in Tone Studio; DELAY's and DELAY2's TAP set
+/// the delay time from the interval between taps.
 private struct EffectColumn: View {
     let model: EditorModel
     let title: String
     let selection: Parameter?
-    let parameters: [Parameter]
+    let menus: [Parameter]
+    /// The TAP button, the column of assignments it sits under, and the DELAY TIME it sets.
+    let tap: (button: TapButton, left: Int, time: Parameter)?
 
     // The rows, from top to bottom.
     private static let colours: [Color] = [.green, .red, .yellow]
+    private static let names = ["GREEN", "RED", "YELLOW"]
 
     var body: some View {
         // REVERB's column also holds LAYER MODE and DELAY2, side by side.
-        let lefts = Set(parameters.compactMap(\.position?.x)).sorted()
-        let tops = Set(parameters.compactMap(\.position?.y)).sorted()
+        let lefts = Set(menus.compactMap(\.position?.x)).sorted()
+        let tops = Set(menus.compactMap(\.position?.y)).sorted()
         VStack(alignment: .leading, spacing: 8) {
             Text(title).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
             Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 8) {
@@ -99,6 +144,21 @@ private struct EffectColumn: View {
                         }
                     }
                 }
+                if let tap {
+                    GridRow {
+                        Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
+                        ForEach(lefts, id: \.self) { left in
+                            if left == tap.left {
+                                tapButton(tap)
+                            } else {
+                                Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
+                            }
+                        }
+                    }
+                }
+            }
+            if let selection, let refusal = model.refusals[selection.offset] {
+                Text(refusal).font(.caption2).foregroundStyle(.red)
             }
         }
         .padding(10)
@@ -107,20 +167,42 @@ private struct EffectColumn: View {
 
     // E.g. LAYER MODE for the column of LAYER MODE GRN.
     private func heading(_ left: Int) -> String {
-        let first = parameters.first { $0.position?.x == left }
+        let first = menus.first { $0.position?.x == left }
         return first?.label.split(separator: " ").dropLast().joined(separator: " ") ?? ""
     }
 
     private func marker(_ row: Int) -> some View {
         let selected = selection.flatMap(model.value(of:)) == row
-        return Image(systemName: selected ? "circle.fill" : "circle")
-            .foregroundStyle(Self.colours[min(row, Self.colours.count - 1)])
-            .accessibilityLabel(selected ? "Selected" : "")
+        let name = Self.names[min(row, Self.names.count - 1)]
+        return Button {
+            if let selection {
+                Task { await model.set(selection, to: row) }
+            }
+        } label: {
+            Image(systemName: selected ? "circle.fill" : "circle")
+                .foregroundStyle(Self.colours[min(row, Self.colours.count - 1)])
+        }
+        .buttonStyle(.borderless)
+        .help("Choose \(name), as the button on the amp would")
+        .accessibilityLabel(name)
+        .accessibilityValue(selected ? "Selected" : "")
+    }
+
+    private func tapButton(_ tap: (button: TapButton, left: Int, time: Parameter)) -> some View {
+        VStack(spacing: 4) {
+            Button("TAP") { Task { await model.tap(tap.button) } }
+                .help("Tap twice or more: the delay time follows the interval between taps")
+            Text(model.value(of: tap.time).map(tap.time.displayText(for:)) ?? "–")
+                .font(.callout).monospacedDigit()
+            if let refusal = model.tapRefusals[tap.button] {
+                Text(refusal).font(.caption2).foregroundStyle(.red)
+            }
+        }
     }
 
     @ViewBuilder
     private func cell(x: Int, y: Int) -> some View {
-        if let parameter = parameters.first(where: { $0.position?.x == x && $0.position?.y == y }) {
+        if let parameter = menus.first(where: { $0.position?.x == x && $0.position?.y == y }) {
             ControlView(model: model, parameter: parameter, showsLabel: false).fixedSize()
         }
     }
