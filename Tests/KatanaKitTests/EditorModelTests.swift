@@ -256,11 +256,11 @@ private func writes(to parameter: Parameter, in amp: SimulatedAmp) -> [Int] {
     let (model, amp) = try await connectedModel()
     let onOff = try #require(model.map.parameter(block: "Patch_1", prm: "PRM_CONTOUR_SW"))
     let select = try #require(model.map.parameter(block: "Patch_1", prm: "PRM_CONTOUR_SELECT"))
-    async let choosing: Void = model.setContour(2)
-    // While the switch waits for its soft switch.
-    try await Task.sleep(for: .milliseconds(5))
+    let choosing = Task { await model.setContour(2) }
+    // The main actor runs the choice up to its first pause before the Panic; a sleep could let the switch out first.
+    await Task.yield()
     await model.panic()
-    await choosing
+    await choosing.value
     await model.settle()
     #expect(writes(to: onOff, in: amp).isEmpty && writes(to: select, in: amp).isEmpty)
     #expect(model.contour == 0)
@@ -297,8 +297,11 @@ private func writes(to parameter: Parameter, in amp: SimulatedAmp) -> [Int] {
     try await Task.sleep(for: .milliseconds(300))
     await model.tap(.delay)
     #expect(model.tapRefusals[.delay] == nil)
-    #expect(try await eventually { model.value(of: time).map { abs($0 - 300) < 60 } == true })
-    #expect(amp.received.count { $0.message == SysEx.dt1(TapButton.delay.address, data: [0], deviceID: 0) } == 2)
+    // The interval as the amp received the taps; the test's own sleep may run long.
+    let taps = amp.received.filter { $0.message == SysEx.dt1(TapButton.delay.address, data: [0], deviceID: 0) }
+    try #require(taps.count == 2)
+    let interval = Int(((taps[1].time - taps[0].time) / .milliseconds(1)).rounded())
+    #expect(try await eventually { model.value(of: time) == interval })
     #expect(writes(to: volume, in: amp).count == volumeWrites)
 }
 
