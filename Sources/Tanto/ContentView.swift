@@ -36,13 +36,14 @@ struct ContentView: View {
         }
         .toolbar {
             ToolbarItem(placement: .navigation) {
-                HStack {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
                     ConnectionBadge(connection: model.connection)
                     if let channel = model.currentChannel {
                         Text(EditorModel.channelLabel(channel)).monospaced()
                     }
                 }
                 .labelStyle(.titleAndIcon)
+                .padding(.horizontal, 8)
             }
             ToolbarItem(placement: .primaryAction) {
                 Button(role: .destructive) {
@@ -104,10 +105,11 @@ private struct ChannelList: View {
     }
 
     var body: some View {
-        // Selecting asks the model; the highlight follows the channel the amp reports, so a cancelled switch stays put.
+        // Selecting asks the model. The highlight shows a switch on its way, then the channel the amp reports, so it falls
+        // back after a cancelled, refused or ignored switch.
         List(
             selection: Binding(
-                get: { model.currentChannel },
+                get: { model.switchTarget ?? model.currentChannel },
                 set: { slot in
                     if let slot, slot != model.currentChannel { Task { await model.requestSwitch(to: slot) } }
                 })

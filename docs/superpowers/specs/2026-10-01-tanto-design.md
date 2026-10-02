@@ -278,8 +278,9 @@ One window in the system's light or dark appearance, with the system's window ba
 as BOSS TONE STUDIO arranges its editor and built from macOS's own controls.
 
 - Toolbar: connection status, current channel, Panic (red, Esc).
-- Sidebar: PANEL, A1–A4 and B1–B4 with their names; the current channel is highlighted; clicking a channel switches to
-  it (5.4). Context menu: "Save Live Sound Here…", "Rename…". Backup and Restore are in the File menu.
+- Sidebar: PANEL, A1–A4 and B1–B4 with their names; the current channel is highlighted, and during a switch the channel
+  it goes to; clicking a channel switches to it (5.4), and a click during another switch is dropped. Context menu: "Save
+  Live Sound Here…", "Rename…". Backup and Restore are in the File menu.
 - Editor:
   - The patch name.
   - The front panel, always shown: AMPLIFIER (VARIATION, AMP TYPE, GAIN, VOLUME), EQUALIZER (BASS, MIDDLE, TREBLE),

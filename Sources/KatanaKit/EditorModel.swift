@@ -81,6 +81,9 @@ public final class EditorModel {
     public private(set) var hasUnsavedEdits = false
     /// A switch to another channel that waits for the user's answer.
     public private(set) var pendingSwitch: PendingSwitch?
+    /// The channel a switch is on its way to, from the request until the switch is done, refused or cancelled; the
+    /// sidebar highlights it meanwhile.
+    public private(set) var switchTarget: Int?
     /// The result or the error of the latest librarian action, as a message for the window.
     public private(set) var librarianMessage: String?
 
@@ -264,6 +267,7 @@ public final class EditorModel {
         safety = nil
         librarian = nil
         pendingSwitch = nil
+        switchTarget = nil
         connection = .notConnected
     }
 
@@ -288,6 +292,7 @@ public final class EditorModel {
         safety = nil
         librarian = nil
         pendingSwitch = nil
+        switchTarget = nil
         connection = .notConnected
     }
 
@@ -483,9 +488,13 @@ public final class EditorModel {
 
     /// Asks to switch to a channel. The switch happens at once, unless the live patch has unsaved edits or the channel's
     /// front-panel volumes lie above their ceilings: then `pendingSwitch` holds the question, the unsaved edits first.
+    /// A request while another switch asks or reads is dropped.
     ///
     /// - Parameter slot: 0 = PANEL, 1–4 = A1–A4, 5–8 = B1–B4.
     public func requestSwitch(to slot: Int) async {
+        guard switchTarget == nil else { return }
+        switchTarget = slot
+        defer { if pendingSwitch == nil { switchTarget = nil } }
         if hasUnsavedEdits {
             pendingSwitch = PendingSwitch(slot: slot, question: .unsavedEdits)
         } else {
@@ -499,6 +508,7 @@ public final class EditorModel {
     public func answerSwitch(_ proceed: Bool) async {
         guard let pending = pendingSwitch else { return }
         pendingSwitch = nil
+        defer { if pendingSwitch == nil { switchTarget = nil } }
         guard proceed else { return }
         switch pending.question {
         case .unsavedEdits:

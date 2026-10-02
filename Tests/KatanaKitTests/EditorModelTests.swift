@@ -190,6 +190,32 @@ private func modelWithLoudChannel() async throws -> (EditorModel, SimulatedAmp, 
 }
 
 @MainActor
+@Test func aSwitchIsTheTargetUntilItEndsSoTheSidebarFallsBackAfterCancel() async throws {
+    let (model, _, _) = try await modelWithLoudChannel()
+    await model.requestSwitch(to: 6)
+    #expect(model.switchTarget == 6)
+    await model.answerSwitch(false)
+    #expect(model.switchTarget == nil)
+    #expect(model.currentChannel == 1)
+    await model.requestSwitch(to: 5)
+    #expect(model.switchTarget == nil)
+    #expect(try await eventually { model.currentChannel == 5 })
+}
+
+@MainActor
+@Test func aRequestWhileAnotherSwitchAsksIsDropped() async throws {
+    let (model, amp, _) = try await modelWithLoudChannel()
+    await model.requestSwitch(to: 6)
+    let start = amp.received.count
+    await model.requestSwitch(to: 5)
+    #expect(model.pendingSwitch?.slot == 6)
+    #expect(model.switchTarget == 6)
+    #expect(amp.received.count == start)
+    await model.answerSwitch(false)
+    #expect(model.currentChannel == 1)
+}
+
+@MainActor
 @Test func savesRenamesAndSavesMadeOnTheAmpUpdateTheNames() async throws {
     let (model, amp, _) = try await modelWithLoudChannel()
     await model.save(to: 3)

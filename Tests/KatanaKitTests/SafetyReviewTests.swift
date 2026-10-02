@@ -374,9 +374,11 @@ func m2_panicDoesNotWaitForAnUnansweredRead(readTimeout: Duration) async throws 
     await rig.safety.settle()
 }
 
-// Four writes wait in the session when Panic comes; VOLUME 0 passes all but the one already on its way.
+// Four writes wait in the session when Panic comes; VOLUME 0 passes all but the one already on its way. Messages go
+// 100 ms apart, so that Panic comes within the first gap also when other tests load the machine.
 @Test func m2_panicGoesAheadOfEverythingQueuedInTheSession() async throws {
-    let rig = try await ReviewRig(volume: 10)
+    let rig = try await ReviewRig(
+        volume: 10, timing: SessionTiming(spacing: .milliseconds(100), readTimeout: .seconds(3)))
     let bass = try rig.parameter("Status", "PRM_KNOB_POS_BASS")
     let start = rig.amp.received.count
     let queued = (1...4).map { value in Task { try await rig.session.write(value, to: bass) } }
