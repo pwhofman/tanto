@@ -56,6 +56,9 @@ app="build/$name.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$bin/Tanto" "$app/Contents/MacOS/Tanto"
+# The linker leaves the paths of the build folder in the binary as debugging information, and with them the user's name
+# on this Mac; the app needs none of it.
+strip -S -no_code_signature_warning "$app/Contents/MacOS/Tanto"
 # SwiftPM's resource bundle is not found inside a hand-made app, so the app loads its own copy of the table.
 cp Sources/KatanaKit/Resources/parameters.json "$app/Contents/Resources/"
 cp Icon/AppIcon.icns "$app/Contents/Resources/AppIcon.icns"
@@ -96,6 +99,8 @@ cat > "$app/Contents/Info.plist" << PLIST
 </plist>
 PLIST
 plutil -lint "$app/Contents/Info.plist"
+# Copied files keep their extended attributes, such as the download mark on the icon; the app ships without them.
+xattr -cr "$app"
 codesign --force --sign - "$app"
 codesign --verify --strict "$app"
 echo "Built $app"
